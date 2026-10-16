@@ -1,0 +1,19 @@
+# Research checkouts: dependencies are installed from the lockfile, not these trees.
+/herdr/
+/agentcore-samples/
+/agentcore-sdk-python/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+dist/
+*.egg-info/
+.coverage
+.DS_Store
+# Runtime configuration and credentials belong outside this repository.
+.env
+.env.*
+runtime_config.json
+agent.config
+infra.config

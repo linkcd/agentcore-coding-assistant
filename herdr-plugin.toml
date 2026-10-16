@@ -1,0 +1,69 @@
+id = "agentcore"
+name = "AgentCore"
+version = "0.1.0"
+min_herdr_version = "0.9.5"
+description = "Run and interact with cloud-hosted OpenCode agents through Amazon Bedrock AgentCore Runtime."
+platforms = ["linux", "macos"]
+
+[[build]]
+command = ["uv", "sync", "--frozen", "--no-dev"]
+
+[[actions]]
+id = "setup"
+title = "AgentCore: configure a runtime"
+contexts = ["global", "workspace", "pane"]
+command = ["./.venv/bin/python", "-m", "herdr_agentcore", "action", "setup"]
+
+[[actions]]
+id = "new"
+title = "AgentCore: new cloud agent"
+contexts = ["workspace", "pane"]
+command = ["./.venv/bin/python", "-m", "herdr_agentcore", "action", "new"]
+
+[[actions]]
+id = "attach"
+title = "AgentCore: reattach a cloud agent"
+contexts = ["workspace", "pane"]
+command = ["./.venv/bin/python", "-m", "herdr_agentcore", "action", "attach"]
+
+[[actions]]
+id = "sessions"
+title = "AgentCore: saved sessions"
+contexts = ["global", "workspace", "pane"]
+command = ["./.venv/bin/python", "-m", "herdr_agentcore", "action", "sessions"]
+
+[[panes]]
+id = "setup"
+title = "AgentCore setup"
+placement = "split"
+command = ["./.venv/bin/python", "-m", "herdr_agentcore", "menu", "setup"]
+
+[[panes]]
+id = "new"
+title = "New cloud agent"
+placement = "split"
+command = ["./.venv/bin/python", "-m", "herdr_agentcore", "menu", "new"]
+
+[[panes]]
+id = "attach"
+title = "Reattach cloud agent"
+placement = "split"
+command = ["./.venv/bin/python", "-m", "herdr_agentcore", "menu", "attach"]
+
+[[panes]]
+id = "sessions"
+title = "AgentCore sessions"
+placement = "split"
+command = ["./.venv/bin/python", "-m", "herdr_agentcore", "menu", "sessions"]
+
+[[actions]]
+id = "stop"
+title = "AgentCore: stop a detached runtime session"
+contexts = ["workspace", "pane"]
+command = ["./.venv/bin/python", "-m", "herdr_agentcore", "action", "stop"]
+
+[[panes]]
+id = "stop"
+title = "Stop cloud session"
+placement = "split"
+command = ["./.venv/bin/python", "-m", "herdr_agentcore", "menu", "stop"]
