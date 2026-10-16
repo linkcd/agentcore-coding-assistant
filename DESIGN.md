@@ -157,6 +157,7 @@ New UUID session IDs create independent compute environments. Persistent files h
 | `src/herdr_agentcore/herdr.py` | Invoke public Herdr APIs and report transport metadata. |
 | `src/herdr_agentcore/storage.py` | Validate profiles and records; persist state atomically; enforce local attachment locks. |
 | `src/herdr_agentcore/connector.py` | Sign connections, interpret shell frames, launch once, reconnect, and handle termination. |
+| `src/herdr_agentcore/runtime_aws.py` | Build an opt-in launcher shim that removes static runtime credentials after sample initialization and selects OpenCode's expiration-aware provider chain. |
 | `src/herdr_agentcore/terminal.py` | Manage POSIX raw mode, bounded input, detach keys, and resize notifications. |
 | `src/tests/` | Offline behavior tests and optional isolated Herdr manifest validation. |
 
@@ -363,6 +364,16 @@ sequenceDiagram
 
 The default remote argv is `["/app/run.sh"]`, matching the AWS sample. Arguments are shell-quoted individually and launched with `exec env TERM=xterm-256color COLORTERM=truecolor ...`. Remote provisioning, permissions, model selection, and workspace initialization belong to the runtime launcher.
 
+### Opt-in runtime-role credential provider
+
+`configure --runtime-role-credentials` and the corresponding setup-menu option wrap the configured launch argv. The default remains opt-out for compatibility with other runtime authentication setups. The wrapper resolves the installed OpenCode executable, creates a private temporary `opencode` shim, prepends its directory to `PATH`, and runs the original launcher. When the launcher invokes `opencode`, the shim clears `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, and `AWS_SECURITY_TOKEN`, sets `AWS_PROFILE=default`, and execs the original executable with the supplied arguments.
+
+Clearing credentials **after** initialization matters: the sample fetches and exports a static IMDS credential snapshot during `/app/run.sh`. Merely unsetting variables before that script would allow it to restore the snapshot. The shim retains the launcher's generated region/model/MCP configuration. In OpenCode 1.18.30, selecting an AWS profile activates the Node credential provider chain; on the verified runtime, the default chain resolves execution-role credentials with expiration metadata.
+
+The profile's `aws_profile` still selects management-host credentials for AgentCore API calls. The runtime's `AWS_PROFILE=default` is independent. The wrapped command is saved as ordinary version-1 profile argv, so existing connection snapshots are unchanged and no credentials are persisted. Original argv is validated before wrapping, and the resulting command must still meet profile length/control-character limits.
+
+This option requires an already-installed OpenCode binary and a launcher that preserves the shim's precedence in `PATH`. An absolute OpenCode invocation bypasses it. Default-profile credentials from a file or other source, explicit provider credentials, and Bedrock API keys can select different authentication; use the option only where the runtime's default chain resolves its intended execution role. The temporary shim lives in ephemeral runtime storage. Automatic process repair and full credential-lifetime validation are separate work.
+
 ## Current connector transport and lifecycle behavior
 
 ```mermaid
@@ -445,9 +456,12 @@ The opt-in probes are ordinary scripts under `src/tests/`, excluded from automat
 ```bash
 uv run python src/tests/live_agentcore_smoke.py --runtime-arn "$RUNTIME_ARN"
 uv run python src/tests/live_herdr_smoke.py --runtime-arn "$RUNTIME_ARN"
+uv run python src/tests/live_herdr_smoke.py --runtime-arn "$RUNTIME_ARN" --runtime-role-credentials
 ```
 
 Both accept an optional `--aws-profile`. They create and stop their own new sessions; the Herdr probe makes small model calls and must run from a Herdr-managed pane. Runtime/account identifiers are supplied at execution, not embedded in source. The probes keep terminal output in memory and print test diagnostics; they do not persist raw transcripts.
+
+With `--runtime-role-credentials`, the Herdr probe also uses `InvokeAgentRuntimeCommand` to inspect its own test OpenCode process. Only credential-presence/profile/shim booleans leave the runtime; credential values are never returned. This optional check requires command-invocation permission as well as the usual shell/model/stop access.
 
 ### Concurrent startup and small-viewport failure — 2026-10-16
 
@@ -483,6 +497,16 @@ On request, all five connectors were detached, each runtime session was stopped 
 
 Still pending: durable workflow recovery, permission/question dialogs, forced network outages, a fix or protective handling for small viewports, the full Herdr resize/layout matrix, laptop sleep/reboot, long-idle or maximum-lifetime behavior, S3 Files-backed coding-state persistence, and the EC2 management deployment.
 
+### Runtime credential expiry and conversation recovery — 2026-10-16
+
+A session left running across laptop sleep later returned `The security token included in the request is expired` on Bedrock requests. Management-host STS access succeeded and the terminal remained connected. Redacted remote inspection established that OpenCode retained the sample launcher's static temporary credentials while IMDS already returned a different, current credential set. Reconnecting the shell could not change that process environment.
+
+With the static variables removed and `AWS_PROFILE=default`, a Node provider-chain check returned credentials with expiration metadata, and a headless OpenCode model turn succeeded. The existing conversation was then recovered manually: identify the saved conversation/home, make a database backup, detach the connector, confirm the old process identity and exit, allocate a replacement shell in the same runtime session, and launch OpenCode with its original `--session` value and the refreshed provider setup. The private binding was updated to the replacement shell and attached in Herdr. A new model turn succeeded in the original conversation. Its earlier error messages remained historical chat entries.
+
+This demonstrated **process/conversation recovery while the original compute and local database survived**. It did not implement a resume action, recover stopped compute, establish S3 Files-backed persistence, or restore in-flight work. Operational runtime, shell, and conversation identifiers remain outside this repository.
+
+The new opt-in wrapper was separately tested from a fresh session through the real sample launcher. A Bedrock model turn passed, remote process inspection confirmed `AWS_PROFILE=default` and no static AWS credential variables, and detach/reattach plus a context-aware follow-up succeeded. The disposable test runtime and isolated Herdr server were stopped. Offline tests cover post-initialization credential removal, argument quoting, management-profile isolation, and rejection of invalid original argv. Full credential rotation across expiration remains unverified.
+
 ## Upstream references
 
 - [Herdr plugin contract](https://herdr.dev/docs/plugins/) and [wrapper detection](https://herdr.dev/docs/agents/).
@@ -493,3 +517,4 @@ Still pending: durable workflow recovery, permission/question dialogs, forced ne
 - [AgentCore isolated sessions and stop/resume behavior](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-sessions.html).
 - [AgentCore S3 Files mounts and filesystem alternatives](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-filesystem-configurations.html).
 - [StopRuntimeSession and retryable conflicts](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-stop-session.html).
+- [OpenCode 1.18.30 provider implementation](https://github.com/anomalyco/opencode/blob/v1.18.30/packages/opencode/src/provider/provider.ts).

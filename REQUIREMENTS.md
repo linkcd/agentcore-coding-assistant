@@ -59,6 +59,7 @@ Only the new-agent and live-PTY reattachment paths are implemented in the curren
 | F10 | Distinguish terminal detachment from explicitly stopping the session's compute and processes. |
 | F11 | List saved connections with clearly labeled last-known status. Prevent competing local connectors from attaching to the same saved connection. |
 | F12 | Preserve user configuration and connection records across plugin updates. |
+| F13 | Offer opt-in expiration-aware runtime-role authentication for the sample's PATH-based OpenCode launcher. Preserve runtime initialization, management-host authentication, and existing connection snapshots. |
 
 ## Lifecycle requirements — next increment
 
@@ -147,7 +148,8 @@ Outside the plugin's product scope: Cognito/end-user authentication, per-user Ru
 | Small-viewport failure | A failed remote TUI must not be mistaken for a healthy idle agent or receive uncontrolled terminal input. | Known gap: OpenCode 1.18.30/Bun 1.3.14 crashes at 35×20 before mouse input, while the connector can remain connected. Zoomed view is the current workaround; process-aware failure handling is pending. |
 | Platform compatibility | Supported Python versions pass on macOS and Linux. | Local Python 3.13/macOS verified; CI matrix configured, remote CI pending. |
 | Clean execution | A new independent binding gets fresh compute and its own persistent-home namespace by default; explicitly selected existing files are preserved. | Pending S3 Files home/bootstrap integration and live validation. |
-| Process recovery | Resume after OpenCode exits preserves execution binding, files, and conversation while using a new process/PTY. | Not implemented. |
+| Runtime credentials | Temporary execution-role credentials remain refreshable without copying credentials into plugin state or requiring laptop-side renewal. | Opt-in wrapper implemented. Fresh Bedrock turns, absence of static credentials in OpenCode, and same-session reattachment passed live validation. Full credential-lifetime rollover remains unverified. |
+| Process recovery | Resume after OpenCode exits preserves execution binding, files, and conversation while using a new process/PTY. | Manually verified after credential expiry while compute survived, using the saved OpenCode session and a replacement shell. No automated resume action. |
 | Compute recovery | Stop and resume with the same runtime session ID restores saved files and the primary conversation; stop completion is respected. | Not implemented. |
 | Herdr rebinding | A replacement pane reconnects the same saved execution binding while respecting Herdr's live-agent naming rules. | Recovery/rebinding behavior not implemented. |
 | Recovery failure | Missing storage or incompatible runtime versions require explicit recovery/reset; concurrent recovery does not duplicate agent launches. | Not implemented. |

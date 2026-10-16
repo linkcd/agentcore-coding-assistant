@@ -12,6 +12,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from . import __version__, herdr
+from .runtime_aws import runtime_role_launcher
 from .storage import Paths, Profile, Store, UserError
 
 
@@ -32,6 +33,11 @@ def parser() -> argparse.ArgumentParser:
     configure.add_argument("--aws-profile")
     configure.add_argument("--endpoint", default="DEFAULT")
     configure.add_argument("--replace", action="store_true")
+    configure.add_argument(
+        "--runtime-role-credentials",
+        action="store_true",
+        help="Use refreshable runtime IAM credentials with a PATH-based OpenCode launcher",
+    )
     configure.add_argument("--command", nargs=argparse.REMAINDER, default=["/app/run.sh"])
     commands.add_parser("profiles", parents=[common])
     sessions = commands.add_parser("sessions", parents=[common])
@@ -75,11 +81,17 @@ def setup_menu(store: Store):
     arn = input("Runtime ARN: ").strip()
     aws_profile = input("AWS profile (blank for default credential chain): ").strip() or None
     endpoint = input("Runtime endpoint [DEFAULT]: ").strip() or "DEFAULT"
+    use_runtime_role = (
+        input("Use refreshable runtime-role credentials? [y/N]: ").strip().lower() == "y"
+    )
     profile = Profile.from_dict(
         {
             "runtime_arn": arn,
             "aws_profile": aws_profile,
             "endpoint": endpoint,
+            "command": (
+                runtime_role_launcher(["/app/run.sh"]) if use_runtime_role else ["/app/run.sh"]
+            ),
         }
     )
     replace = name in store.profiles()
@@ -87,9 +99,7 @@ def setup_menu(store: Store):
         return
     store.save_profile(name, profile, replace)
     print(f"Saved to {store.paths.config / 'config.json'}")
-    print(
-        "Default remote launch: /app/run.sh. Edit command argv in config.json for another launcher."
-    )
+    print("Remote launcher: /app/run.sh. Runtime-role refresh: " + str(use_runtime_role))
     input("Press Enter to close setup.")
 
 
@@ -222,6 +232,10 @@ def main(argv: list[str] | None = None) -> int:
                     "endpoint": args.endpoint,
                 }
             )
+            if args.runtime_role_credentials:
+                profile = Profile.from_dict(
+                    {**asdict(profile), "command": runtime_role_launcher(profile.command)}
+                )
             store.save_profile(args.profile, profile, args.replace)
             print(f"Saved profile {args.profile} to {store.paths.config / 'config.json'}")
         elif args.operation == "profiles":

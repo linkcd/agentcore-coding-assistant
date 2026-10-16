@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -18,6 +19,7 @@ import uuid
 from pathlib import Path
 
 from herdr_agentcore.connector import AgentCoreTransport
+from herdr_agentcore.runtime_aws import runtime_role_launcher
 from herdr_agentcore.storage import Paths, Profile, Store, UserError
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -126,10 +128,78 @@ class IsolatedHerdr:
         return json.loads(response.stdout).get("result", {}).get("agent")
 
 
-def run(runtime_arn: str, aws_profile: str | None):
+def check_runtime_role_environment(profile: Profile, record: dict):
+    """Inspect only our test session; return booleans, never credential values."""
+    import boto3
+    from botocore.config import Config
+
+    script = """
+import json
+from pathlib import Path
+
+snapshots = []
+for process in Path('/proc').glob('[0-9]*'):
+    try:
+        if (process / 'comm').read_text().strip() != 'opencode':
+            continue
+        env = dict(item.split(b'=', 1) for item in
+                   (process / 'environ').read_bytes().split(b'\\0') if b'=' in item)
+    except (FileNotFoundError, PermissionError, ProcessLookupError):
+        continue
+    snapshots.append({
+        'has_static_credentials': any(key in env for key in (
+            b'AWS_ACCESS_KEY_ID', b'AWS_SECRET_ACCESS_KEY',
+            b'AWS_SESSION_TOKEN', b'AWS_SECURITY_TOKEN')),
+        'default_profile': env.get(b'AWS_PROFILE') == b'default',
+        'shim_used': bool(env.get(b'HERDR_REAL_OPENCODE')),
+    })
+print(json.dumps(snapshots))
+"""
+    client = boto3.Session(profile_name=profile.aws_profile, region_name=profile.region).client(
+        "bedrock-agentcore", config=Config(read_timeout=60)
+    )
+    response = client.invoke_agent_runtime_command(
+        agentRuntimeArn=profile.runtime_arn,
+        runtimeSessionId=record["runtime_session_id"],
+        qualifier=profile.endpoint,
+        body={"command": shlex.join(["python3", "-c", script]), "timeout": 30},
+    )
+    output = []
+    exit_code = None
+    for event in response["stream"]:
+        if "chunk" not in event:
+            raise UserError("Runtime credential environment inspection failed.")
+        chunk = event["chunk"]
+        output.append(chunk.get("contentDelta", {}).get("stdout", ""))
+        if "contentStop" in chunk:
+            exit_code = chunk["contentStop"].get("exitCode")
+    if exit_code != 0:
+        raise UserError("Runtime credential environment inspection did not complete.")
+    snapshots = json.loads("".join(output))
+    if not snapshots or not all(
+        not entry["has_static_credentials"] and entry["default_profile"] and entry["shim_used"]
+        for entry in snapshots
+    ):
+        raise UserError("OpenCode did not start with the expected runtime-role environment.")
+    print(
+        "PASS: runtime OpenCode has AWS_PROFILE=default and no static AWS credentials", flush=True
+    )
+
+
+def run(runtime_arn: str, aws_profile: str | None, runtime_role_credentials: bool = False):
     if os.environ.get("HERDR_ENV") != "1":
         raise UserError("Run this probe from a Herdr-managed pane.")
-    profile = Profile.from_dict({"runtime_arn": runtime_arn, "aws_profile": aws_profile})
+    profile = Profile.from_dict(
+        {
+            "runtime_arn": runtime_arn,
+            "aws_profile": aws_profile,
+            "command": (
+                runtime_role_launcher(["/app/run.sh"])
+                if runtime_role_credentials
+                else ["/app/run.sh"]
+            ),
+        }
+    )
     transport = AgentCoreTransport(profile)
     with tempfile.TemporaryDirectory(prefix="h-") as temp:
         herdr = IsolatedHerdr(Path(temp))
@@ -193,6 +263,8 @@ def run(runtime_arn: str, aws_profile: str | None):
                 raise UserError("Herdr prompt/wait failed; input will not be resubmitted.")
             until(lambda: "HERDR-CLOUD=457" in herdr.read(pane), "model reply", 60)
             print("PASS: model turn produced HERDR-CLOUD=457", flush=True)
+            if runtime_role_credentials:
+                check_runtime_role_environment(profile, record)
             print("Completed screen:\n" + herdr.read(pane), flush=True)
             herdr.call("pane", "send-text", pane, "\x1dd")
             until(lambda: store.load(record["id"])["status"] == "detached", "connector detach", 15)
@@ -279,9 +351,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runtime-arn", required=True)
     parser.add_argument("--aws-profile")
+    parser.add_argument("--runtime-role-credentials", action="store_true")
     args = parser.parse_args()
     try:
-        run(args.runtime_arn, args.aws_profile)
+        run(args.runtime_arn, args.aws_profile, args.runtime_role_credentials)
     except Exception as exc:
         message = str(exc) if isinstance(exc, UserError) else type(exc).__name__
         print(f"FAIL: {message}", flush=True)

@@ -31,10 +31,13 @@ Experimental version `0.1.0`, targeting Herdr 0.9.5+, Python 3.11+, macOS/Linux.
 | `src/herdr_agentcore/herdr.py` | Public Herdr command calls and connection metadata. |
 | `src/herdr_agentcore/storage.py` | Profile/record validation, atomic persistence, local locks. |
 | `src/herdr_agentcore/connector.py` | AWS signing, shell framing, launch-once behavior, reconnect, termination. |
+| `src/herdr_agentcore/runtime_aws.py` | Opt-in post-initialization shim for expiration-aware runtime-role credentials. |
 | `src/herdr_agentcore/terminal.py` | Raw POSIX terminal I/O, resize signals, detach keys, cleanup. |
 | `src/tests/` | Offline behavior tests and optional Herdr manifest validation. |
 
 The runtime must already be deployed. The default remote launcher is `/app/run.sh`, matching the AWS coding-agent sample. The plugin does not deploy infrastructure or install OpenCode on the management host. A cloud Herdr host must have the plugin, its dependencies, and runtime profiles installed there; the laptop's plugins/config are not automatically copied to it.
+
+Setup or `configure --runtime-role-credentials` can wrap a PATH-based OpenCode launcher to remove static credentials after initialization and set runtime `AWS_PROFILE=default`. Enable only where that default chain resolves the intended execution role. The management-host `aws_profile` stays independent; saved connection snapshots are unchanged. An absolute OpenCode invocation bypasses the shim. Original argv and wrapped argv must both pass profile validation.
 
 ## Preserve these decisions
 
@@ -77,6 +80,8 @@ That test uses isolated config/state/socket paths and does not start a server or
 
 Opt-in live scripts are `src/tests/live_agentcore_smoke.py` and `src/tests/live_herdr_smoke.py`. Both require `--runtime-arn` and optionally `--aws-profile`; they create and stop their own fresh runtime sessions. The Herdr script also creates an isolated local server and performs small model calls. These scripts are not part of default pytest discovery. Obtain authorization for live runs; never substitute an existing work session for their generated test IDs.
 
+The Herdr smoke test accepts `--runtime-role-credentials` to exercise the wrapper and inspect only its own OpenCode process through `InvokeAgentRuntimeCommand`. It returns credential-presence booleans, never values. That optional validation also requires command-invocation permission.
+
 The manifest's production build is `uv sync --frozen --no-dev`. After testing that command, use `uv sync --frozen` to restore test dependencies. Keep version numbers aligned in the manifest, package metadata, and `__init__.py`; regenerate the lockfile when dependency/project resolution changes.
 
 ## Validation status and next work
@@ -87,6 +92,9 @@ The manifest's production build is `uv sync --frozen --no-dev`. After testing th
 - Five independent sessions were started and recognized in one tab. Small tiled panes exposed an OpenCode 1.18.30/Bun 1.3.14 native crash: 35×20 failed before any mouse input; 80×20 and 35×40 passed startup plus SGR wheel controls. The exact source-level bug and safe-size boundary remain unknown. Five recovered agents subsequently completed parallel news-retrieval/translation tasks and follow-up corrections, then were stopped on request. Discover current sessions before operating; later user-opened sessions are not disposable probes.
 - A live wrapper plus `cloud=connected` and an idle badge can outlast a remote TUI crash. Literal mouse/focus escape sequences may then echo. Verify visible application output, and avoid history reads that inject scrolling into a failed application. The opt-in `src/tests/live_layout_probe.py` reproduces viewport behavior in fresh disposable sessions.
 - Literal key echo can also indicate suspension, not a crash. Cloud-5 was observed with remote OpenCode in `T (stopped)` state; identity-checked `SIGCONT` restored the same process/chat. The `exec` launcher leaves no parent shell for `fg`. Distinguish Unix process suspension, agent idle, and stopped AgentCore compute before choosing a recovery action.
+- A later Bedrock token-expiry incident came from `/app/run.sh` exporting temporary IMDS credentials once. Host STS access and the shell still worked while OpenCode retained an expired snapshot. An expiration-aware Node provider and model call were verified after removing the snapshot and setting runtime `AWS_PROFILE=default`.
+- The affected conversation was manually resumed in the same surviving runtime using a database backup, identity-checked process replacement, a new shell, and the saved OpenCode `--session` value. A follow-up model turn succeeded. Discover current state before operating; the user continues using this session. This is evidence for process recovery, not an implemented resume action or durable compute recovery.
+- The opt-in wrapper passed a separate fresh-session Herdr test: original launcher initialization, model turn, OpenCode environment without static credential variables, detach/reattach, context-aware follow-up, and test cleanup. The externally configured user profile was updated for future launches. Full credential-lifetime rollover remains untested; profile changes do not repair previously launched processes.
 - Basic concurrent prompting and result collection are verified. Durable workflow recovery, approval dialogs, forced network outages, small-viewport protection, the full pane resize/layout matrix, long-idle/max-lifetime behavior, and persistent coding-state recovery remain unverified or unresolved.
 - No EC2/ECS management deployment, laptop sleep/reboot validation, or automatic management-host recovery has been implemented or verified.
 - The Linux/macOS Python 3.11/3.13 CI matrix is configured; remote CI execution and GitHub-managed install/update validation remain pending.
