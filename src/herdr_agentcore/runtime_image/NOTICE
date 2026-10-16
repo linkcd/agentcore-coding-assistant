@@ -1,0 +1,9 @@
+Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+
+The Dockerfile, run.sh, and healthcheck.py are adapted from
+awslabs/agentcore-samples, licensed under Apache License 2.0:
+https://github.com/awslabs/agentcore-samples/tree/abab3d8beb684c79fc827a95a2d015e44e76dbbc/01-features/02-host-your-agent/01-runtime/04-coding-agents/03-code-agents-competition-e2e/coding_agents/open-code
+
+Modified for Herdr AgentCore: pinned OpenCode installation, execution-role
+credential provider, standalone health endpoint, and non-destructive startup.
+See the repository LICENSE for the Apache License 2.0 terms.

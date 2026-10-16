@@ -1,0 +1,15 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "amazon-bedrock": {
+      "options": {
+        "region": "{env:AWS_REGION}"
+      }
+    }
+  },
+  "enabled_providers": ["amazon-bedrock"],
+  "model": "amazon-bedrock/{env:BEDROCK_MODEL_ID}",
+  "small_model": "amazon-bedrock/{env:BEDROCK_MODEL_ID}",
+  "autoupdate": false,
+  "share": "disabled"
+}

@@ -2,7 +2,7 @@
 
 ## Objective
 
-Provide a community-installable Herdr plugin for coding agents that execute in AgentCore Runtime, beginning with interactive OpenCode and the AWS coding-agent sample.
+Provide a community-installable Herdr plugin for coding agents that execute in AgentCore Runtime, including a repository-owned OpenCode container, runtime provisioning, and terminal connection/orchestration.
 
 ## Scope authority
 
@@ -14,7 +14,7 @@ Jindouyun is a reference for execution concepts only. The plugin does not depend
 
 - Herdr 0.9.5 or later on macOS and Linux.
 - Python 3.11 or later, with dependencies managed by uv.
-- An existing AgentCore runtime with WebSocket Shell access and an interactive OpenCode launcher.
+- Either provision the included OpenCode runtime or configure an existing AgentCore runtime with WebSocket Shell access. Provisioning uses a local Docker engine with Buildx/ARM64 support and management-host AWS authorization.
 - Connectors run on the Herdr server host: laptop-hosted for development, or cloud-hosted for unattended management. OpenCode executes in independent AgentCore environments.
 
 ## Deployment target
@@ -60,6 +60,10 @@ Only the new-agent and live-PTY reattachment paths are implemented in the curren
 | F11 | List saved connections with clearly labeled last-known status. Prevent competing local connectors from attaching to the same saved connection. |
 | F12 | Preserve user configuration and connection records across plugin updates. |
 | F13 | Offer opt-in expiration-aware runtime-role authentication for the sample's PATH-based OpenCode launcher. Preserve runtime initialization, management-host authentication, and existing connection snapshots. |
+| F14 | Ship the OpenCode image build context and provisioning implementation in the same distribution as the connector, with upstream attribution and no dependency on research checkouts. |
+| F15 | Provision ECR, an execution role, and an IAM-authenticated AgentCore runtime; publish a pinned ARM64 image and save a connector profile only after deployment completes. |
+| F16 | Use the runtime execution role and an expiration-aware SDK credential provider for Bedrock. Do not fetch, export, or persist credential snapshots in the owned launcher. Keep deployment authentication separate. |
+| F17 | Provide an offline deployment plan, explicit updates to owned stacks, bounded deployment waits, and CloudFormation failure/cleanup guidance. Retain existing profile and session state on failed provisioning. |
 
 ## Lifecycle requirements — next increment
 
@@ -124,7 +128,7 @@ S3 Files is the primary persistence target. Managed per-session storage Preview 
 
 These remain absent from the current implementation. The process/compute recovery items are now explicit next-increment requirements above, not implemented features.
 
-- Provisioning AgentCore infrastructure.
+- Provisioning VPC/S3 Files/gateway infrastructure (the included deployment currently uses public networking and ephemeral coding state).
 - Automated EC2/ECS management-host deployment, recovery, and failover.
 - Windows terminal support.
 - Restarting OpenCode from a persisted conversation or recovering after compute termination.
@@ -140,6 +144,8 @@ Outside the plugin's product scope: Cognito/end-user authentication, per-user Ru
 | Area | Required outcome | Current evidence |
 | --- | --- | --- |
 | Plugin contract | Herdr accepts the manifest and its declared commands match implemented entrypoints. | Offline tests, isolated Herdr 0.9.5 registry validation, and live new/attach/stop actions. |
+| Owned runtime provisioning | Build and deploy the included image with role-based Bedrock access, then connect using its saved profile. | AWS deployment and image update passed. Herdr model turn, process environment without static credentials or the compatibility shim, detach/reattach, context-aware follow-up, and test-session stop all passed. Full post-expiry credential rotation remains pending. |
+| Runtime lifecycle | Document per-session limits; report actual active work as `HealthyBusy`; distinguish detachment, stop, and recoverable state. | Deployed idle timeout verified at 900 seconds and maximum lifetime at 28,800 seconds, with no persistent filesystem. Current health endpoint always returns `Healthy`; activity-aware reporting and idle/max-lifetime recovery tests remain pending. |
 | Terminal transport | Input/output bytes and resize messages survive a round trip. Local terminal modes restore on failure. | Live AgentCore shell input/output and resize before/after reconnect; local WebSocket/PTY tests. Full pane-layout/resize matrix pending. |
 | Session identity | Reconnect uses the original runtime-session/shell pair without another launch. | Live same-PID/environment reattach and an OpenCode follow-up turn retaining conversation context; offline tests. |
 | Failure handling | Uncertain input is not replayed; takeover stops retries; a missing original PTY does not trigger another agent launch. | Offline tests. |

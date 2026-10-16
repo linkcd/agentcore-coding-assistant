@@ -6,6 +6,8 @@
 
 The current prototype creates agents, reattaches surviving PTYs, detaches, and explicitly stops compute. The lifecycle target extends this with persisted conversation identity, process restart, and recovery onto fresh compute. Sections labeled **target** describe planned work; they do not change the current connector's conservative behavior when the original PTY is missing.
 
+The repository also owns the OpenCode runtime image and an explicit `provision` CLI workflow. Existing external runtimes remain supported. Provisioning is a separate deployment operation; opening a pane uses an existing deployment rather than building infrastructure per agent.
+
 ### Scope of the Jindouyun comparison
 
 Jindouyun is a reference for missing execution concepts: persistent coding files, remote Working Directories, multiple shells, skills, and process/conversation recovery. It is not a required backend. This plugin does not adopt Cognito, per-user account ownership, a customer-facing Runtime catalog, DynamoDB registries, or the proposed `agentcore-code` CLI.
@@ -154,12 +156,51 @@ New UUID session IDs create independent compute environments. Persistent files h
 | --- | --- |
 | `herdr-plugin.toml` | Declare build steps, actions, and terminal pane entrypoints. |
 | `src/herdr_agentcore/cli.py` | Parse commands; present setup/session menus; coordinate new, attach, and stop workflows. |
+| `src/herdr_agentcore/provision.py` | Generate CloudFormation definitions, build/push the pinned ARM64 image, create/update owned infrastructure/runtime stacks, and register the resulting connector profile. |
+| `src/herdr_agentcore/runtime_image/` | Tracked image build context: OpenCode installation, `/app/run.sh`, role-provider bootstrap, OpenCode configuration, HTTP health endpoint, and upstream notices. |
 | `src/herdr_agentcore/herdr.py` | Invoke public Herdr APIs and report transport metadata. |
 | `src/herdr_agentcore/storage.py` | Validate profiles and records; persist state atomically; enforce local attachment locks. |
 | `src/herdr_agentcore/connector.py` | Sign connections, interpret shell frames, launch once, reconnect, and handle termination. |
 | `src/herdr_agentcore/runtime_aws.py` | Build an opt-in launcher shim that removes static runtime credentials after sample initialization and selects OpenCode's expiration-aware provider chain. |
 | `src/herdr_agentcore/terminal.py` | Manage POSIX raw mode, bounded input, detach keys, and resize notifications. |
 | `src/tests/` | Offline behavior tests and optional isolated Herdr manifest validation. |
+
+## Repository-owned runtime and provisioning
+
+`herdr-agentcore provision` provides the deployment path alongside the connector. It adapts the OpenCode portion of `awslabs/agentcore-samples`; provenance and Apache-2.0 notices are included in the repository, distribution, and image. The ignored upstream checkout is no longer needed to build this runtime. The standalone image supplies local coding tools without requiring the sample's GitHub gateway or shared deployment files.
+
+### Deployment sequence
+
+1. Validate the runtime name, region, model ID, pinned OpenCode version, and destination profile. `--plan` prints both templates without Docker/AWS calls or configuration writes.
+2. Check the local Docker engine/Buildx and inspect both CloudFormation stacks before mutation. Stack tags identify the deployment; existing stacks require `--update`, and unrelated or unstable stacks are rejected.
+3. Create/update `herdr-<name>-image`, containing ECR and an AgentCore execution role. Runtime-name underscores become hyphens in stack names. Trust is constrained to the account and matching regional runtime. Permissions cover the repository pull, runtime logs, and the selected Bedrock model plus its geographic system inference profiles.
+4. Build `linux/arm64` with a pinned OpenCode release, push under a unique immutable tag, and resolve the image digest. Docker's ECR login uses a temporary configuration and stdin, never runtime credentials or build arguments. Preserve Docker Desktop plugin discovery while keeping its stored logins separate.
+5. Create/update `herdr-<name>-runtime` with `AWS::BedrockAgentCore::Runtime`, the execution role, and the digest-pinned image. Runtime access uses IAM (no JWT authorizer). The current template uses `PUBLIC` networking, HTTP health endpoints, a 900-second idle timeout, and a 28,800-second maximum lifetime.
+6. Wait for CloudFormation completion, then save the runtime ARN as a normal connector profile with `/app/run.sh`. `--replace` is required to replace a profile. No compatibility credential shim is needed for the owned image. Provisioning does not create an agent session; the existing Herdr new-agent action does that.
+
+The deployment identity uses the management host's normal AWS chain/optional `--aws-profile`, including ECR upload and CloudFormation/IAM/PassRole/AgentCore permissions. The runtime execution role grants model access independently. The configured model must be available to the account/region. Foundation-model IDs and geographic system inference-profile IDs are supported; arbitrary application inference-profile ARNs need additional policy/configuration support. Primary and small-model tasks use the same configured model to keep authorization aligned.
+
+### Runtime bootstrap and authentication
+
+The image installs OpenCode 1.18.30 by default and verifies its version during the build. The runtime HTTP process runs as an unprivileged user. `/app/run.sh` executes `launch.py`, which passes native OpenCode arguments through unchanged (including `--session`). It chooses `OPENCODE_WORKDIR` or the existing `HOME`; it does not overwrite user configuration or insert permissive tool-approval settings. Both the image and launcher set `OPENCODE_DISABLE_AUTOUPDATE=1`: OpenCode's updater reads global configuration, so `autoupdate: false` in the runtime's additional config file alone does not reliably suppress the startup update dialog.
+
+`/app/opencode.json` supplies the Bedrock provider/region/model through `OPENCODE_CONFIG`. The launcher sets `AWS_PROFILE=default` to select OpenCode's expiration-aware Node provider chain. With no credential files or injected keys in this image, the chain resolves the AgentCore execution role and refreshes temporary credentials internally. There are no manual IMDS fetches, access-key exports, bearer tokens, or credential snapshots. Only allowlisted non-secret deployment settings are inherited from PID 1 when the shell omits them.
+
+The HTTP server reports `Healthy` liveness without fabricating workload timestamps. It is not a workload supervisor; idle/max-lifetime limits still apply. The included deployment currently uses ephemeral coding state and does not mount S3 Files. Persistent-home namespaces, mount/VPC provisioning, process-aware busy reporting, and automatic resume remain the next increments.
+
+### Updates, failures, and cleanup
+
+Rerun with `--update --replace` to update the deployment and its existing connector profile. Every build gets a unique tag and the runtime uses its digest. This does not restart existing OpenCode processes or retrofit their environment; use new sessions to validate a new image. Changing model authorization can affect existing sessions using that role.
+
+CloudFormation operations use bounded waits and retain observable stack state on errors. A build/push failure can leave the image stack ready; retry with `--update`. A rollback-complete failed creation must be inspected/deleted in CloudFormation before retrying. A failure after runtime creation but before profile saving leaves a deployed runtime: recover its `RuntimeArn` stack output and configure the connector rather than creating another deployment. No automatic destructive cleanup runs on ambiguous failures.
+
+For deliberate teardown, stop the deployment's sessions, delete the `herdr-<name>-runtime` stack and wait for deletion, then delete `herdr-<name>-image`. ECR is retained by policy; retrieve `RepositoryName` from the image stack outputs before deletion and remove that repository separately when its images are no longer needed. Remove the corresponding connector profile separately. Deleting stacks is distinct from the plugin's session-stop action.
+
+Local validation covers the actual ARM64 image/OpenCode configuration, HTTP contract, bootstrap argv and configuration preservation, offline plan, scoped IAM template generation, ownership/update guards, bounded failure handling, profile registration, and temporary Docker credential storage. Both generated templates passed `cfn-lint`.
+
+AWS provisioning subsequently passed, including infrastructure creation, ECR push, runtime creation, connector-profile registration, and a digest-pinned image update. The initial live probe exposed an update dialog that Herdr classified as idle; the test's Enter went to the dialog rather than a model prompt. That disposable session was stopped. The launcher now disables the updater explicitly, and the live probe rejects known update screens before submitting a prompt.
+
+After the image update, `live_herdr_smoke.py --check-runtime-role` passed against the owned deployment using `/app/run.sh` directly: a real Bedrock response, process inspection confirming no static credential variables and no compatibility shim, detach/reattach to the same session, a context-aware follow-up, and explicit test-session stop. The isolated Herdr server was also stopped. Deployment identifiers and the registered user profile remain outside the repository. Real credential rollover across a complete token lifetime remains unverified.
 
 ## Herdr integration
 
@@ -362,9 +403,11 @@ sequenceDiagram
     end
 ```
 
-The default remote argv is `["/app/run.sh"]`, matching the AWS sample. Arguments are shell-quoted individually and launched with `exec env TERM=xterm-256color COLORTERM=truecolor ...`. Remote provisioning, permissions, model selection, and workspace initialization belong to the runtime launcher.
+The default remote argv is `["/app/run.sh"]`, supported by both the owned image and the AWS sample. Arguments are shell-quoted individually and launched with `exec env TERM=xterm-256color COLORTERM=truecolor ...`. The explicit provisioning CLI creates infrastructure and model authorization; the remote launcher configures the OpenCode process.
 
 ### Opt-in runtime-role credential provider
+
+This compatibility path applies to external upstream-sample images. The repository-owned launcher already uses the role provider directly and does not need the shim.
 
 `configure --runtime-role-credentials` and the corresponding setup-menu option wrap the configured launch argv. The default remains opt-out for compatibility with other runtime authentication setups. The wrapper resolves the installed OpenCode executable, creates a private temporary `opencode` shim, prepends its directory to `PATH`, and runs the original launcher. When the launcher invokes `opencode`, the shim clears `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, and `AWS_SECURITY_TOKEN`, sets `AWS_PROFILE=default`, and execs the original executable with the supplied arguments.
 
@@ -405,6 +448,20 @@ stateDiagram-v2
 
 AgentCore microVM lifetime and idle limits still apply. Reattaching after expiry can reach a fresh environment; that must not be mistaken for the original agent. The sample's shared storage mount does not automatically persist OpenCode conversation state.
 
+### Deployed session lifecycle
+
+The owned runtime's control-plane configuration was verified as `idleRuntimeSessionTimeout: 900`, `maxLifetime: 28800`, with no filesystem configurations. These are the values explicitly generated by `runtime_template()` in `src/herdr_agentcore/provision.py`, not just assumed service defaults.
+
+- **Idle:** 15 minutes of platform-determined inactivity triggers compute termination. AgentCore documents invocation activity and `HealthyBusy` workload reporting as relevant to idle accounting. The precise effects of interactive Shell traffic on that accounting have not been validated here.
+- **Maximum lifetime:** 8 hours from that compute instance's creation. Activity, reconnects, and refreshed IAM credentials do not reset the maximum-lifetime clock. Termination can take up to 15 seconds after a threshold is reached.
+- **Scope:** each independent agent session has its own compute and timers. Termination does not delete the runtime deployment, image, execution role, or host-local connection record. The deployment can still provision new sessions.
+- **Detach versus stop:** detach closes only the terminal connection. Explicit `StopRuntimeSession` terminates the selected session's compute and all its processes. The current stop path records an accepted request; it has no completion waiter or automatic resume workflow.
+- **Data:** the current image uses ephemeral home/workspace/OpenCode state. Without S3 Files or another configured persistent filesystem, those files and conversation data must not be expected to survive compute termination. Retaining a connection UUID or reusing a runtime session ID does not reconstruct them.
+
+The current `runtime_image/healthcheck.py` returns `{"status": "Healthy"}` for every `/ping`. It neither observes OpenCode work nor emits `HealthyBusy`. Consequently, liveness, a connected WebSocket, and Herdr's screen-derived status do not establish workload-aware protection against idle shutdown. This is a known implementation gap, not a claim that an agent can safely execute for eight uninterrupted hours.
+
+The follow-up supervisor must report actual active/background work, return to `Healthy` when idle, and omit `time_of_last_update` or change it only on real status transitions. It must not manufacture activity to defeat idle cleanup. Pair that work with persistent coding state and explicit process/compute recovery before claiming reliable unattended operation. Full idle-expiry and maximum-lifetime recovery tests remain pending.
+
 ## Implementation increments
 
 1. Extend the verified single-agent and five-agent workflows to the remaining durable orchestration, dialog, network-outage, and pane-layout acceptance cases.
@@ -414,7 +471,7 @@ AgentCore microVM lifetime and idle limits still apply. Reattaching after expiry
 5. Add explicit resume, Herdr rebinding, management-host reconciliation, and retryable lifecycle conflicts. Add helper/agent shell panes in existing sessions with separate shell-stop versus session-stop semantics.
 6. Test persistent files, selected Working Directories, multiple shells, process restart, compute stop/resume, management-host replacement, and competing recovery attempts.
 
-Management-host and runtime provisioning remain separately configured. Autonomous coordination uses Herdr's APIs and runs on the management host for unattended operation. Authoritative lifecycle-event forwarding can build on the execution bindings; ECS deployment and multi-host failover follow validation of the single-host contract. None of these increments depends on Cognito or Jindouyun platform services.
+Management-host deployment remains separately configured; the repository now supplies runtime-image provisioning. Autonomous coordination uses Herdr's APIs and runs on the management host for unattended operation. Authoritative lifecycle-event forwarding can build on the execution bindings; ECS deployment and multi-host failover follow validation of the single-host contract. None of these increments depends on Cognito or Jindouyun platform services.
 
 ## Packaging and validation
 
@@ -457,11 +514,14 @@ The opt-in probes are ordinary scripts under `src/tests/`, excluded from automat
 uv run python src/tests/live_agentcore_smoke.py --runtime-arn "$RUNTIME_ARN"
 uv run python src/tests/live_herdr_smoke.py --runtime-arn "$RUNTIME_ARN"
 uv run python src/tests/live_herdr_smoke.py --runtime-arn "$RUNTIME_ARN" --runtime-role-credentials
+uv run python src/tests/live_herdr_smoke.py --runtime-arn "$RUNTIME_ARN" --check-runtime-role
 ```
 
 Both accept an optional `--aws-profile`. They create and stop their own new sessions; the Herdr probe makes small model calls and must run from a Herdr-managed pane. Runtime/account identifiers are supplied at execution, not embedded in source. The probes keep terminal output in memory and print test diagnostics; they do not persist raw transcripts.
 
 With `--runtime-role-credentials`, the Herdr probe also uses `InvokeAgentRuntimeCommand` to inspect its own test OpenCode process. Only credential-presence/profile/shim booleans leave the runtime; credential values are never returned. This optional check requires command-invocation permission as well as the usual shell/model/stop access.
+
+Use `--check-runtime-role` for the owned image: it performs the same credential-environment check while verifying the compatibility shim is absent. It does not wrap or modify the runtime launcher.
 
 ### Concurrent startup and small-viewport failure — 2026-10-16
 
@@ -514,6 +574,7 @@ The new opt-in wrapper was separately tested from a fresh session through the re
 - [AWS coding-agent runtime sample](https://github.com/awslabs/agentcore-samples/tree/main/01-features/02-host-your-agent/01-runtime/04-coding-agents/03-code-agents-competition-e2e).
 - [AgentCore Python SDK shell implementation](https://github.com/aws/bedrock-agentcore-sdk-python/tree/main/src/bedrock_agentcore/runtime/shell).
 - [AgentCore runtime lifecycle](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-lifecycle-settings.html).
+- [AgentCore busy-state reporting and long-running work](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-long-run.html).
 - [AgentCore isolated sessions and stop/resume behavior](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-sessions.html).
 - [AgentCore S3 Files mounts and filesystem alternatives](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-filesystem-configurations.html).
 - [StopRuntimeSession and retryable conflicts](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-stop-session.html).

@@ -35,6 +35,13 @@ def until(operation, description: str, timeout: float = 90):
     raise UserError(f"Timed out: {description}")
 
 
+def check_prompt_screen(screen: str):
+    # This OpenCode update dialog can still be classified as idle by Herdr.
+    # Sending a prompt+Enter would answer the dialog, not submit a model turn.
+    if "Update Available" in screen or "Updating to v" in screen:
+        raise UserError("OpenCode's updater is active; no prompt will be submitted.")
+
+
 class IsolatedHerdr:
     def __init__(self, directory: Path):
         self.binary = shutil.which("herdr")
@@ -128,7 +135,7 @@ class IsolatedHerdr:
         return json.loads(response.stdout).get("result", {}).get("agent")
 
 
-def check_runtime_role_environment(profile: Profile, record: dict):
+def check_runtime_role_environment(profile: Profile, record: dict, expect_shim: bool = True):
     """Inspect only our test session; return booleans, never credential values."""
     import boto3
     from botocore.config import Config
@@ -177,7 +184,9 @@ print(json.dumps(snapshots))
         raise UserError("Runtime credential environment inspection did not complete.")
     snapshots = json.loads("".join(output))
     if not snapshots or not all(
-        not entry["has_static_credentials"] and entry["default_profile"] and entry["shim_used"]
+        not entry["has_static_credentials"]
+        and entry["default_profile"]
+        and entry["shim_used"] == expect_shim
         for entry in snapshots
     ):
         raise UserError("OpenCode did not start with the expected runtime-role environment.")
@@ -186,7 +195,12 @@ print(json.dumps(snapshots))
     )
 
 
-def run(runtime_arn: str, aws_profile: str | None, runtime_role_credentials: bool = False):
+def run(
+    runtime_arn: str,
+    aws_profile: str | None,
+    runtime_role_credentials: bool = False,
+    check_runtime_role: bool = False,
+):
     if os.environ.get("HERDR_ENV") != "1":
         raise UserError("Run this probe from a Herdr-managed pane.")
     profile = Profile.from_dict(
@@ -240,7 +254,9 @@ def run(runtime_arn: str, aws_profile: str | None, runtime_role_credentials: boo
                 "30000",
                 timeout=35,
             )
-            print("OpenCode screen:\n" + herdr.read(pane), flush=True)
+            screen = herdr.read(pane)
+            check_prompt_screen(screen)
+            print("OpenCode screen:\n" + screen, flush=True)
             prompt = (
                 "This is a connectivity smoke test. Do not use tools or change files. "
                 "Reply with HERDR and CLOUD joined by a hyphen, then an equals sign, "
@@ -263,8 +279,10 @@ def run(runtime_arn: str, aws_profile: str | None, runtime_role_credentials: boo
                 raise UserError("Herdr prompt/wait failed; input will not be resubmitted.")
             until(lambda: "HERDR-CLOUD=457" in herdr.read(pane), "model reply", 60)
             print("PASS: model turn produced HERDR-CLOUD=457", flush=True)
-            if runtime_role_credentials:
-                check_runtime_role_environment(profile, record)
+            if runtime_role_credentials or check_runtime_role:
+                check_runtime_role_environment(
+                    profile, record, expect_shim=runtime_role_credentials
+                )
             print("Completed screen:\n" + herdr.read(pane), flush=True)
             herdr.call("pane", "send-text", pane, "\x1dd")
             until(lambda: store.load(record["id"])["status"] == "detached", "connector detach", 15)
@@ -352,9 +370,19 @@ def main():
     parser.add_argument("--runtime-arn", required=True)
     parser.add_argument("--aws-profile")
     parser.add_argument("--runtime-role-credentials", action="store_true")
+    parser.add_argument(
+        "--check-runtime-role",
+        action="store_true",
+        help="Verify the owned runtime's role environment without adding a compatibility shim",
+    )
     args = parser.parse_args()
     try:
-        run(args.runtime_arn, args.aws_profile, args.runtime_role_credentials)
+        run(
+            args.runtime_arn,
+            args.aws_profile,
+            args.runtime_role_credentials,
+            args.check_runtime_role,
+        )
     except Exception as exc:
         message = str(exc) if isinstance(exc, UserError) else type(exc).__name__
         print(f"FAIL: {message}", flush=True)

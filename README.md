@@ -2,7 +2,7 @@
 
 ## Goal
 
-A community Herdr plugin for managing, viewing, and interacting with **OpenCode agents running inside Amazon Bedrock AgentCore Runtime**.
+A community Herdr plugin for provisioning, managing, viewing, and interacting with **OpenCode agents running inside Amazon Bedrock AgentCore Runtime**. This repository contains both the runtime container/provisioning code and the Herdr connector.
 
 Herdr owns workspaces, tabs, panes, agent identities, and orchestration. The plugin connects those primitives to remote execution. AWS access uses the management host's credential chain or IAM role; there is no Cognito login or separate end-user platform.
 
@@ -13,6 +13,7 @@ Herdr owns workspaces, tabs, panes, agent identities, and orchestration. The plu
 | Capability | Status |
 | --- | --- |
 | Configure an existing runtime; start independent cloud agents | Implemented and live-tested |
+| Build OpenCode image, provision ECR/IAM/AgentCore, and save a connector profile | Deployed and live-tested, including image update, role-based Bedrock calls, and reattachment |
 | Terminal input/output, resize, detach, and same-PTY reattachment | Implemented and live-tested |
 | Herdr agent recognition, prompt/read/wait, and explicit session stop | Implemented and live-tested |
 | Five concurrent agents fetching and translating separate news feeds | Live-tested, including follow-up prompts and cleanup |
@@ -27,7 +28,30 @@ The live baseline used Herdr **0.9.5**, OpenCode **1.18.30**, and the locked Age
 
 ## Run a local checkout
 
-Requirements: macOS or Linux, Herdr 0.9.5+, Python 3.11+, uv, an existing AgentCore runtime with interactive OpenCode/Shell access, and authorized AWS credentials.
+Requirements: macOS or Linux, Herdr 0.9.5+, Python 3.11+, uv, and authorized management-host AWS access. Provisioning additionally needs a local Docker engine with Buildx and ARM64 build support. You can provision the included runtime or connect to an existing one.
+
+### Provision the included runtime
+
+The deployment creates an ECR repository, an AgentCore execution role, and an IAM-authenticated runtime. The image installs pinned OpenCode **1.18.30** with runtime self-updates disabled. Bedrock access uses the **runtime execution role** through the SDK credential provider chain: no API key, manual metadata fetch, or exported access-key/session-token snapshot.
+
+```bash
+uv sync --frozen
+herdr plugin link "$PWD"
+uv run herdr-agentcore provision \
+  --name opencode --region us-west-2 \
+  --model-id anthropic.claude-sonnet-4-5-20250929-v1:0 \
+  --profile owned-runtime \
+  --config-dir "$(herdr plugin config-dir agentcore)"
+herdr plugin action invoke agentcore.new
+```
+
+Select `owned-runtime` in the new-agent menu. Choose a model available to your AWS account/region; `--model-id` also accepts geographic system inference-profile IDs. The deployment identity needs CloudFormation, ECR, IAM/PassRole, and AgentCore provisioning permissions. Use `--aws-profile` to select that management-host identity.
+
+Add `--plan` to print the two CloudFormation templates without contacting AWS or Docker. To update this deployment and its saved profile, rerun with `--update --replace`; `--opencode-version` selects another pinned release. Updates require new OpenCode processes to use the new image/configuration. See [provisioning design](DESIGN.md#repository-owned-runtime-and-provisioning) for stack ownership, failure recovery, and cleanup.
+
+The included deployment is a public-network runtime with local, ephemeral coding state. VPC/S3 Files persistence and automatic conversation recovery remain planned. It works without the original sample's gateway, shared infrastructure files, or research checkout.
+
+### Connect to an existing runtime
 
 From the repository root in a Herdr shell pane:
 
@@ -38,7 +62,7 @@ herdr plugin action invoke agentcore.setup
 herdr plugin action invoke agentcore.new
 ```
 
-Setup asks for **your own** runtime ARN, optional management-host AWS profile, endpoint, and whether to enable refreshable runtime-role credentials. No deployment-specific values are bundled. The default remote launcher is `/app/run.sh`, matching the initial AWS sample. The plugin connects to existing infrastructure; it does not deploy it.
+Setup asks for **your own** runtime ARN, optional management-host AWS profile, endpoint, and whether to enable the legacy sample's credential wrapper. No deployment-specific values are bundled. The default remote launcher is `/app/run.sh`, supported by both the included image and the original AWS sample.
 
 | Action | Purpose |
 | --- | --- |
@@ -71,7 +95,9 @@ That is an operator-assisted recovery sequence, not a supported `resume` command
 
 ## Runtime-role credentials
 
-The sample launcher exports a one-time copy of temporary AWS credentials. After those expire, OpenCode can report `The security token included in the request is expired` even while the terminal is connected and management-host AWS access works. Laptop sleep can expose this elapsed-time issue; reattaching does not refresh the remote process environment.
+**The included image uses the execution role automatically.** Its `/app/run.sh` starts OpenCode with `AWS_PROFILE=default`, enabling the expiration-aware Node provider chain. The image contains no credential files and does not fetch or export temporary credentials. Its runtime-owned OpenCode configuration is separate from user configuration, which startup preserves. The compatibility flag below is only needed for older external sample images.
+
+The upstream sample launcher exports a one-time copy of temporary AWS credentials. After those expire, OpenCode can report `The security token included in the request is expired` even while the terminal is connected and management-host AWS access works. Laptop sleep can expose this elapsed-time issue; reattaching does not refresh the remote process environment.
 
 For a runtime whose default AWS credential chain resolves its execution role, enable **refreshable runtime-role credentials** during setup, or configure a profile with:
 
@@ -84,6 +110,22 @@ uv run herdr-agentcore configure \
 Supply your runtime ARN through `RUNTIME_ARN`; add `--replace` to update an existing profile. The opt-in wrapper preserves sample initialization, clears its static credential snapshot immediately before OpenCode starts, and sets runtime `AWS_PROFILE=default` to enable OpenCode's refreshable Node provider chain. Management-host authentication is unchanged. Profile updates affect **new connections only**.
 
 The wrapper requires a launcher that resolves `opencode` through `PATH`. Absolute-binary launchers and Bedrock API-key configurations need runtime-specific setup. Fresh model calls, the credential-free process environment, and detach/reattach passed live validation; rollover across a full credential lifetime remains untested.
+
+## Runtime lifecycle
+
+The owned deployment's current settings were verified through the AgentCore control API:
+
+| Setting or operation | Current behavior |
+| --- | --- |
+| Idle timeout | **15 minutes** (`900` seconds) of platform-determined inactivity triggers termination. |
+| Maximum compute lifetime | **8 hours** (`28,800` seconds) from compute creation; activity and reattachment do not reset this limit. |
+| Detach | Disconnects the terminal without requesting compute termination; lifecycle limits still apply. |
+| Stop | Terminates that runtime session's compute and processes. The deployment remains available for new sessions. |
+| Storage and recovery | Coding files and chat history are ephemeral. Warm reattachment works while the original process survives; automatic recovery after compute termination is not implemented. |
+
+These timers apply independently to each session's compute, not to the deployed runtime as a whole. Local connector records survive, but they cannot restore an expired runtime's files or conversation.
+
+**Workload-aware idle protection is not implemented.** The current `/ping` handler always returns `Healthy`, not `HealthyBusy` while OpenCode works. A connected terminal or WebSocket keepalive is not proof of workload reporting, so long-running/background work is not yet protected from idle termination by our application. Reliable unattended operation requires activity-aware health reporting, persistent storage, and recovery. See [lifecycle details](DESIGN.md#deployed-session-lifecycle).
 
 ## Known terminal limitations
 
@@ -111,6 +153,8 @@ Do not commit AWS credentials, personal account/resource identifiers, populated 
 - [DESIGN.md](DESIGN.md): architecture, diagrams, and validation findings.
 - [agent.md](agent.md): instructions and context for follow-up coding agents.
 - `src/herdr_agentcore/`: implementation; `src/tests/`: offline tests and opt-in live probes.
+- `src/herdr_agentcore/runtime_image/`: tracked Dockerfile, launcher, OpenCode configuration, and HTTP health endpoint, adapted from the AWS sample with attribution.
+- `src/herdr_agentcore/provision.py`: CloudFormation definitions, ARM64 image build/push, runtime creation/update, and connector-profile registration.
 - `herdr-plugin.toml`: community plugin manifest; `pyproject.toml` and `uv.lock`: packaging/dependencies.
 
 ```bash

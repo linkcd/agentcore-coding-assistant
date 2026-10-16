@@ -31,7 +31,7 @@ dev = ["pytest>=8.4,<10", "pytest-asyncio>=1,<2", "ruff>=0.12,<1"]
 packages = ["src/herdr_agentcore"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/", "herdr-plugin.toml", "pyproject.toml", "uv.lock", "README.md", "REQUIREMENTS.md", "DESIGN.md", "agent.md", "AGENTS.md", "LICENSE"]
+include = ["src/", "herdr-plugin.toml", "pyproject.toml", "uv.lock", "README.md", "REQUIREMENTS.md", "DESIGN.md", "agent.md", "AGENTS.md", "LICENSE", "NOTICE"]
 
 [tool.pytest.ini_options]
 testpaths = ["src/tests"]

@@ -23,6 +23,22 @@ def parser() -> argparse.ArgumentParser:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--config-dir", help="Override the plugin configuration directory")
     common.add_argument("--state-dir", help="Override the plugin state directory")
+    provision = commands.add_parser("provision", parents=[common])
+    provision.add_argument("--name", required=True, help="Name for the new runtime deployment")
+    provision.add_argument("--region", required=True)
+    provision.add_argument(
+        "--model-id", required=True, help="Bedrock model/system inference-profile ID"
+    )
+    provision.add_argument("--opencode-version", default="1.18.30")
+    provision.add_argument("--aws-profile", help="Management-host AWS credentials")
+    provision.add_argument("--profile", default="default", help="Connector profile to save")
+    provision.add_argument("--replace", action="store_true", help="Replace the connector profile")
+    provision.add_argument(
+        "--update", action="store_true", help="Update this deployment's existing stacks"
+    )
+    provision.add_argument(
+        "--plan", action="store_true", help="Print templates without AWS or Docker calls"
+    )
     configure = commands.add_parser("configure", parents=[common])
     configure.add_argument("--profile", default="default")
     runtime = configure.add_mutually_exclusive_group(required=True)
@@ -217,7 +233,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     store = Store(Paths.resolve(args.config_dir, args.state_dir))
     try:
-        if args.operation == "configure":
+        if args.operation == "provision":
+            from .provision import provision
+
+            provision(args, store)
+        elif args.operation == "configure":
             arn = args.runtime_arn
             if args.runtime_config:
                 imported = json.loads(args.runtime_config.read_text())
