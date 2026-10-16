@@ -186,7 +186,7 @@ The image installs OpenCode 1.18.30 by default and verifies its version during t
 
 `/app/opencode.json` supplies the Bedrock provider/region/model through `OPENCODE_CONFIG`. The launcher sets `AWS_PROFILE=default` to select OpenCode's expiration-aware Node provider chain. With no credential files or injected keys in this image, the chain resolves the AgentCore execution role and refreshes temporary credentials internally. There are no manual IMDS fetches, access-key exports, bearer tokens, or credential snapshots. Only allowlisted non-secret deployment settings are inherited from PID 1 when the shell omits them.
 
-The HTTP server reports `Healthy` liveness without fabricating workload timestamps. It is not a workload supervisor; idle/max-lifetime limits still apply. The included deployment currently uses ephemeral coding state and does not mount S3 Files. Persistent-home namespaces, mount/VPC provisioning, process-aware busy reporting, and automatic resume remain the next increments.
+The image includes a local OpenCode activity plugin and a health reader. Its `/ping` response switches between `Healthy` and `HealthyBusy` based on fresh, live-process activity reports, without fabricating workload timestamps. Plugin dependencies are resolved during the image build so loading the bundled plugin works without runtime package downloads in the default home. This activity increment is deployed and validated in AWS as well as locally. The deployed runtime still uses ephemeral coding state and does not mount S3 Files. Persistent-home namespaces, mount/VPC provisioning, and automatic resume remain next increments.
 
 ### Updates, failures, and cleanup
 
@@ -369,7 +369,7 @@ The new resume path must make stopped/expired execution recoverable through its 
 | Connection | attached, detached, reconnecting | Local connector. |
 | Agent work | working, idle, blocked, unknown | Current screen detection; future remote OpenCode event bridge. |
 
-Do not conflate `idle` with stopped compute, or detachment with task completion. The runtime supervisor should report actual active/background work through AgentCore health responses (`HealthyBusy` when appropriate). WebSocket keepalive is a transport mechanism, not a substitute for workload tracking or a way to bypass maximum compute lifetime. The sample's always-`Healthy` handler does not implement this supervisor.
+Do not conflate `idle` with stopped compute, or detachment with task completion. The deployed activity bridge supplies AgentCore health reporting from OpenCode events; it does not yet forward those events to Herdr or provide recovery supervision. WebSocket keepalive is a transport mechanism, not a substitute for workload tracking or a way to bypass maximum compute lifetime. Sessions created on older images retain their previous health behavior until replaced.
 
 ## Current launch and reattach sequence
 
@@ -458,9 +458,23 @@ The owned runtime's control-plane configuration was verified as `idleRuntimeSess
 - **Detach versus stop:** detach closes only the terminal connection. Explicit `StopRuntimeSession` terminates the selected session's compute and all its processes. The current stop path records an accepted request; it has no completion waiter or automatic resume workflow.
 - **Data:** the current image uses ephemeral home/workspace/OpenCode state. Without S3 Files or another configured persistent filesystem, those files and conversation data must not be expected to survive compute termination. Retaining a connection UUID or reusing a runtime session ID does not reconstruct them.
 
-The current `runtime_image/healthcheck.py` returns `{"status": "Healthy"}` for every `/ping`. It neither observes OpenCode work nor emits `HealthyBusy`. Consequently, liveness, a connected WebSocket, and Herdr's screen-derived status do not establish workload-aware protection against idle shutdown. This is a known implementation gap, not a claim that an agent can safely execute for eight uninterrupted hours.
+The deployed image now reports `HealthyBusy` for fresh, live OpenCode work leases and `Healthy` when none remain. This protects reported active work through AgentCore's documented health contract; a connected WebSocket or Herdr's screen-derived badge alone still does not establish workload activity. Full-duration platform idle/max-lifetime testing remains pending.
 
-The follow-up supervisor must report actual active/background work, return to `Healthy` when idle, and omit `time_of_last_update` or change it only on real status transitions. It must not manufacture activity to defeat idle cleanup. Pair that work with persistent coding state and explicit process/compute recovery before claiming reliable unattended operation. Full idle-expiry and maximum-lifetime recovery tests remain pending.
+### Activity-aware health — deployed and validated
+
+`runtime_image/activity-plugin.mjs` uses the public OpenCode 1.18.30 `event` and `dispose` hooks. `activity.mjs` tracks `session.status` (`busy`, `retry`, `idle`) per session, plus session errors and permission/question requests and replies. A session with an outstanding permission/question request is treated as waiting for input rather than active work. A reply releases that wait; the session remains busy only until a later idle/error event. Other active sessions can keep the runtime busy independently.
+
+Each plugin instance writes its own private, atomic JSON lease under `/tmp/herdr-agentcore-activity`, only while it has active work. The lease contains a PID, Linux process-start tick, freshness timestamp, and busy flag—no prompt, tool arguments, credentials, or conversation contents. Heartbeats run every 10 seconds while work is active. Idle/wait transitions and disposal remove the lease and stop its heartbeat.
+
+`activity.py` aggregates all instance leases on `/ping`. A lease must be at most 45 seconds old and match a live process's PID/start tick. Stopped, zombie, exited, reused-PID, malformed, oversized, and future-dated records do not count. Thus a process crash cannot leave a fresh-looking busy marker indefinitely, and a frozen reporter cannot renew activity forever. Missing/failed reporting falls back to `Healthy`; it must not fabricate work. Heartbeat timestamps are internal freshness metadata: the AWS response omits `time_of_last_update`, so polls never manufacture status changes.
+
+An OpenCode process sitting at its prompt is `Healthy`. With 16 minutes of active work followed by an unanswered question and no other active work, the transition to `Healthy` occurs around minute 16; the configured idle window can then expire around minute 31. This does not extend the 8-hour compute ceiling or preserve ephemeral files after termination.
+
+Local validation includes real OpenCode shell work producing `Healthy → HealthyBusy → Healthy`, the same server remaining alive while idle, and busy-process death returning health to idle. Node event tests cover retry, completion, question/permission waits, multiple outstanding requests, multiple sessions, disposal, and work-only heartbeats. Python tests cover stale/malformed leases, PID reuse, process suspension/exit, and timestamp-free HTTP responses. The Docker smoke test runs with networking disabled and makes no model or AWS calls.
+
+Cloud validation used a fresh AgentCore session and its actual deployed `/ping` process. Real shell work produced busy/idle transitions. A Bedrock turn asked a question using OpenCode's question tool: generation was busy, waiting was idle while the request remained pending, answering resumed busy reporting, and the final model response returned health to idle. Killing only that probe's OpenCode process also returned health to idle. The probe session was explicitly stopped afterward. A separate isolated Herdr test passed model inference, role-environment inspection, same-session reattachment, a context-aware follow-up, and cleanup on the new image. Live permission-dialog behavior, full-duration platform idle expiry, maximum lifetime, and credential rollover remain unverified.
+
+The bridge observes OpenCode's reported session state, not arbitrary detached OS jobs. Work continuing after OpenCode reports idle needs additional task tracking. Disabling external plugins (`--pure`) or replacing the bundled configuration can disable activity reporting. The bridge is not persistent storage, a process-restart supervisor, or the future Herdr event relay. Roll it out through an image update and start fresh sessions; running processes do not hot-reload this configuration.
 
 ## Implementation increments
 
@@ -522,6 +536,8 @@ Both accept an optional `--aws-profile`. They create and stop their own new sess
 With `--runtime-role-credentials`, the Herdr probe also uses `InvokeAgentRuntimeCommand` to inspect its own test OpenCode process. Only credential-presence/profile/shim booleans leave the runtime; credential values are never returned. This optional check requires command-invocation permission as well as the usual shell/model/stop access.
 
 Use `--check-runtime-role` for the owned image: it performs the same credential-environment check while verifying the compatibility shim is absent. It does not wrap or modify the runtime launcher.
+
+The activity-specific cloud probe is `uv run python src/tests/live_runtime_activity.py --runtime-arn "$RUNTIME_ARN" --model-turn`. It creates and stops its own session, uses `InvokeAgentRuntimeCommand` to run the shared smoke script, and tests the existing runtime health endpoint without replacing that process. `--model-turn` enables the real Bedrock question/wait/reply cycle; omit it for shell-work and process-death checks only. This short probe verifies state transitions, not a full idle-expiry window.
 
 ### Concurrent startup and small-viewport failure — 2026-10-16
 

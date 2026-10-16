@@ -108,6 +108,9 @@ def test_packaged_runtime_configuration_matches_pinned_opencode():
             "healthcheck.py",
             "NOTICE",
             "LICENSE",
+            "activity.py",
+            "activity.mjs",
+            "activity-plugin.mjs",
         )
     )
 
@@ -142,6 +145,7 @@ def test_built_image_resolves_opencode_configuration_without_credentials():
     config = json.loads(result.stdout)
     assert config["model"] == "amazon-bedrock/" + MODEL
     assert config["provider"]["amazon-bedrock"]["options"]["region"] == "us-west-2"
+    assert "file:///app/activity-plugin.mjs" in config["plugin"]
 
 
 @pytest.mark.skipif(not os.environ.get("HERDR_RUNTIME_TEST_IMAGE"), reason="Opt-in Docker test")
@@ -151,3 +155,34 @@ def test_real_buildx_is_discoverable_with_temporary_docker_config():
     host = docker("context", "inspect", "--format", "{{.Endpoints.docker.Host}}", capture=True)
     with docker_environment(host, directories) as env:
         assert "buildx" in docker("buildx", "version", env=env, capture=True)
+
+
+@pytest.mark.skipif(not os.environ.get("HERDR_RUNTIME_TEST_IMAGE"), reason="Opt-in Docker test")
+def test_real_opencode_drives_runtime_health():
+    script = Path(__file__).with_name("runtime_activity_smoke.py").resolve()
+    result = subprocess.run(
+        [
+            "docker",
+            "run",
+            "--rm",
+            "--network",
+            "none",
+            "--mount",
+            f"type=bind,source={script},target=/tmp/activity-smoke.py,readonly",
+            "-e",
+            "AWS_REGION=us-west-2",
+            "-e",
+            f"BEDROCK_MODEL_ID={MODEL}",
+            "-e",
+            "OPENCODE_DISABLE_MODELS_FETCH=1",
+            "-e",
+            "OPENCODE_DISABLE_DEFAULT_PLUGINS=1",
+            os.environ["HERDR_RUNTIME_TEST_IMAGE"],
+            "python3.11",
+            "/tmp/activity-smoke.py",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr

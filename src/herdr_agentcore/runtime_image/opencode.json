@@ -8,6 +8,7 @@
     }
   },
   "enabled_providers": ["amazon-bedrock"],
+  "plugin": ["file:///app/activity-plugin.mjs"],
   "model": "amazon-bedrock/{env:BEDROCK_MODEL_ID}",
   "small_model": "amazon-bedrock/{env:BEDROCK_MODEL_ID}",
   "autoupdate": false,

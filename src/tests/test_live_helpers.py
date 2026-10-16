@@ -1,11 +1,14 @@
 """Offline regressions for live-test parsing and Herdr session isolation."""
 
 import json
+import uuid
 from unittest.mock import Mock
 
 import pytest
+from conftest import ARN
 from live_agentcore_smoke import field
 from live_herdr_smoke import IsolatedHerdr, check_prompt_screen, check_runtime_role_environment
+from live_runtime_activity import run as run_activity_probe
 
 from herdr_agentcore.storage import UserError
 
@@ -72,3 +75,28 @@ def test_probe_does_not_send_prompt_into_update_dialog(message):
     with pytest.raises(UserError, match="no prompt"):
         check_prompt_screen(f"{message}\nAsk anything…")
     check_prompt_screen("Ask anything…\nBuild · Claude Sonnet 4.5 Amazon Bedrock")
+
+
+@pytest.mark.parametrize(
+    "stream",
+    [
+        [{"runtimeClientError": {"message": "failed"}}],
+        [{"chunk": {"contentStop": {"exitCode": 1}}}],
+    ],
+)
+def test_failed_activity_probe_stops_its_fresh_session(monkeypatch, record, stream):
+    client = Mock()
+    client.invoke_agent_runtime_command.return_value = {"stream": stream}
+    session = Mock()
+    session.client.return_value = client
+    stopped = Mock()
+    monkeypatch.setattr("boto3.Session", Mock(return_value=session))
+    monkeypatch.setattr("live_runtime_activity.AgentCoreTransport.stop", stopped)
+    with pytest.raises(UserError):
+        run_activity_probe(ARN, None, False)
+    request = client.invoke_agent_runtime_command.call_args.kwargs
+    own_id = request["runtimeSessionId"]
+    assert uuid.UUID(own_id).version == 4
+    assert own_id != record["runtime_session_id"]
+    assert "--existing-health-server" in request["body"]["command"]
+    stopped.assert_called_once_with({"runtime_session_id": own_id})

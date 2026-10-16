@@ -20,6 +20,7 @@ Herdr owns workspaces, tabs, panes, agent identities, and orchestration. The plu
 | Refreshable runtime-role credentials with the sample launcher | Opt-in; fresh model turns and reattachment live-tested; full credential rollover pending |
 | Resume a saved conversation after restarting OpenCode in surviving compute | Manually verified; automated resume action is planned |
 | Agent status | Screen-derived today; remote OpenCode hook/event bridge is planned |
+| Activity-aware AgentCore health | Deployed and cloud-tested: work, question wait, reply, completion, and process death |
 | S3 Files-backed repositories, configuration, skills, and OpenCode history | Required by the design; persistent-home integration is not implemented |
 | Recovery after compute expiry, automatic manager restart recovery, additional helper shells | Planned |
 | Always-on EC2 management deployment | Designed; not deployed or validated by this project |
@@ -125,7 +126,9 @@ The owned deployment's current settings were verified through the AgentCore cont
 
 These timers apply independently to each session's compute, not to the deployed runtime as a whole. Local connector records survive, but they cannot restore an expired runtime's files or conversation.
 
-**Workload-aware idle protection is not implemented.** The current `/ping` handler always returns `Healthy`, not `HealthyBusy` while OpenCode works. A connected terminal or WebSocket keepalive is not proof of workload reporting, so long-running/background work is not yet protected from idle termination by our application. Reliable unattended operation requires activity-aware health reporting, persistent storage, and recovery. See [lifecycle details](DESIGN.md#deployed-session-lifecycle).
+**Activity-aware health is deployed and cloud-tested.** An OpenCode event plugin reports busy/retrying sessions as `HealthyBusy`. Finished turns and sessions waiting on permission/question dialogs are idle; `/ping` returns `Healthy` when no other tracked session is active. Fresh process-bound leases prevent a crashed or suspended process from keeping the runtime busy indefinitely. Merely leaving OpenCode at its prompt does not prevent idle cleanup.
+
+For example, **16 minutes of work followed by an unanswered question** becomes idle at minute 16 and is eligible for the 15-minute idle timeout around minute **31**, assuming no other work is active. The 8-hour maximum still applies. New sessions use the updated image; existing sessions do not hot-reload it. Actual cloud state transitions were verified with a Bedrock question/reply turn; persistent storage, recovery, and a full-duration AWS idle-expiry test remain pending. See [lifecycle details](DESIGN.md#deployed-session-lifecycle).
 
 ## Known terminal limitations
 

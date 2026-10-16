@@ -1,15 +1,23 @@
 """AgentCore HTTP contract, adapted from awslabs/agentcore-samples (Apache-2.0).
 
-Modified: threaded HTTP handling, response lengths, and no fabricated activity
-timestamp. This reports liveness, not OpenCode workload activity. Busy reporting
-requires a future process/event supervisor; runtime idle limits still apply.
+Modified: threaded HTTP handling and activity-aware busy reporting, without
+fabricated last-activity timestamps. Maximum compute lifetime still applies.
 """
 
 import json
+import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+if __package__:
+    from .activity import ACTIVITY_DIRECTORY, health_status
+else:
+    from activity import ACTIVITY_DIRECTORY, health_status
 
 
 class Handler(BaseHTTPRequestHandler):
+    activity_directory = Path(os.environ.get("HERDR_ACTIVITY_DIR", ACTIVITY_DIRECTORY))
+
     def respond(self, status: int, body: dict):
         payload = json.dumps(body).encode()
         self.send_response(status)
@@ -22,7 +30,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/ping":
-            self.respond(200, {"status": "Healthy"})
+            self.respond(200, {"status": health_status(self.activity_directory)})
         else:
             self.respond(404, {"error": "Not found"})
 

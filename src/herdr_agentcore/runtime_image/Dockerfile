@@ -13,6 +13,7 @@ RUN npm install --global "opencode-ai@${OPENCODE_VERSION}" \
 
 RUN useradd --create-home --home-dir /home/agent --uid 1000 agent
 COPY healthcheck.py launch.py run.sh opencode.json NOTICE LICENSE /app/
+COPY activity.py activity.mjs activity-plugin.mjs /app/
 RUN chmod 755 /app/run.sh
 
 ENV HOME=/home/agent \
@@ -21,5 +22,9 @@ ENV HOME=/home/agent \
     OPENCODE_CONFIG=/app/opencode.json
 USER agent
 WORKDIR /home/agent
+# OpenCode waits for its plugin SDK installation before loading external hooks.
+# Resolve it during the image build, so runtime startup also works offline.
+RUN AWS_REGION=us-west-2 BEDROCK_MODEL_ID=anthropic.claude-sonnet-4-5-20250929-v1:0 \
+    OPENCODE_DISABLE_MODELS_FETCH=1 opencode debug config > /dev/null
 EXPOSE 8080
 CMD ["python3.11", "/app/healthcheck.py"]
