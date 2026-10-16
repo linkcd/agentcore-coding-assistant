@@ -17,7 +17,8 @@ The goal is a **community Herdr plugin for OpenCode executing inside AgentCore R
 - Keep `herdr-plugin.toml`, `pyproject.toml`, `uv.lock`, and CI configuration in their standard root/`.github/` locations.
 - Keep the plugin standalone. Use Herdr's public plugin, CLI, and socket interfaces rather than changing Herdr core.
 - Local `herdr/`, `agentcore-samples/`, and `agentcore-sdk-python/` directories, if present, are ignored research checkouts. They are not shipped plugin code. Use them as references; do not build a dependency on their local paths or include them in a distribution.
-- Check the actual working tree before changing files; the repository may not yet have a root Git repository initialized. Do not initialize, commit, push, or publish merely to complete a local change.
+- Inspect Git status, diffs, and relevant history before changing files. Commit, push, or publish only when requested.
+- Never commit actual AWS credentials, personal account/resource IDs or ARNs, populated runtime configuration, connection records, or test transcripts. Runtime configuration belongs outside the checkout. Use placeholders or standard fictional account IDs in examples/tests. Before a commit, run the repository privacy guard across working files, index, and history; fix findings without exposing their values.
 
 ## Current implementation
 
@@ -43,7 +44,7 @@ The runtime must already be deployed. The default remote launcher is `/app/run.s
 4. **Attach and resume are different.** Inspect the shell confirmation's `reconnected` flag. Keep attach strict and never blindly launch into an existing agent. The planned resume operation may deliberately create a replacement shell/process after confirming remote state and loading the saved conversation. A network failure alone is not proof the process ended.
 5. **Separate compute, transport, and agent state.** Herdr uses `HERDR_AGENT=opencode` and screen detection. Metadata reports transport health; it must not invent agent lifecycle events. A runtime supervisor must report real work to AgentCore rather than treating socket keepalive as a busy signal.
 6. **Keep user state outside installation.** Use Herdr's plugin config/state directories, atomic records, and per-connection locks. Never persist AWS credentials, signed URLs, or raw terminal transcripts.
-7. **Treat CLI responses correctly.** Herdr success responses contain `id` and `result`; do not require an `ok: true` field.
+7. **Treat CLI responses correctly.** Structured Herdr success responses contain `id` and `result`; do not require an `ok: true` field. Quiet commands such as `pane report-metadata`, `pane send-text`, and `pane send-keys` use exit status and may produce empty stdout.
 8. **Compute lifetime is not persistent-file lifetime.** Stop/expiry can be followed by explicit recovery under the same runtime session ID and recorded S3 Files paths. The current code still treats stopped/expired records as non-attachable; explicit recovery remains to be implemented.
 9. **S3 Files-backed coding state is required but not integrated yet.** Consume the runtime's configured mount, initially `/mnt/s3files`, with a stable persistent-home namespace per independent binding. Persist repositories, working changes, configuration, skills, and OpenCode state; support remote Working Directory selection. Replace the sample launcher's forced ephemeral home/cwd and configuration overwrite. Validate database locking/concurrency and skill discovery; keep sockets/PIDs ephemeral. Managed session storage Preview is only a possible later alternative with different retention semantics.
 10. **One deployment, many sessions and shells.** A runtime profile supplies image/permissions/network/storage settings for multiple sessions. Additional shells may share a runtime session and deliberately share files. Ordinary build/test shells must not be labeled OpenCode agents. Implement separate shell/process stop and whole-session stop scopes before enabling shared-session panes.
@@ -62,6 +63,7 @@ uv sync --frozen
 uv run ruff check src
 uv run ruff format --check src
 uv run pytest
+uv run python src/tests/repository_privacy.py
 uv build
 ```
 
@@ -71,19 +73,26 @@ Optional validation using an installed Herdr binary:
 HERDR_TEST_BINARY="$(command -v herdr)" uv run pytest
 ```
 
-That test uses isolated config/state/socket paths and does not start a server or modify the normal user registry. Without the variable it is skipped. Other tests use fake transports, a real local WebSocket server, and a local PTY; they make no AWS calls.
+That test uses isolated config/state/socket paths and does not start a server or modify the normal user registry. Without the variable it is skipped. Default pytest tests use fake transports, a real local WebSocket server, and a local PTY; they make no AWS calls.
+
+Opt-in live scripts are `src/tests/live_agentcore_smoke.py` and `src/tests/live_herdr_smoke.py`. Both require `--runtime-arn` and optionally `--aws-profile`; they create and stop their own fresh runtime sessions. The Herdr script also creates an isolated local server and performs small model calls. These scripts are not part of default pytest discovery. Obtain authorization for live runs; never substitute an existing work session for their generated test IDs.
 
 The manifest's production build is `uv sync --frozen --no-dev`. After testing that command, use `uv sync --frozen` to restore test dependencies. Keep version numbers aligned in the manifest, package metadata, and `__init__.py`; regenerate the lockfile when dependency/project resolution changes.
 
 ## Validation status and next work
 
 - Offline tests, lint/format checks, package builds, and isolated Herdr 0.9.5 manifest validation have passed on macOS/Python 3.13. Re-run relevant checks after changes.
-- Live AgentCore/OpenCode integration, actual Herdr pane interaction, and cloud lifecycle behavior remain unverified.
+- Live validation on 2026-10-16 passed against an externally configured runtime, with Herdr 0.9.5 and OpenCode 1.18.30: shell input/output and resize, same-PID/environment reattachment, plugin new/attach/stop, a Bedrock model turn through `agent prompt --wait`, and a follow-up turn retaining context after reattachment. All disposable test runtime sessions and isolated Herdr servers were stopped; the original Herdr server remained running. Keep actual deployment identifiers out of repository records.
+- Live tests found that Herdr's quiet commands return empty stdout and AgentCore replays buffered output on attachment. Respect quiet-command exit status and avoid mistaking replayed output for new probe results. See DESIGN.md for the validation details.
+- Five independent sessions were started and recognized in one tab. Small tiled panes exposed an OpenCode 1.18.30/Bun 1.3.14 native crash: 35×20 failed before any mouse input; 80×20 and 35×40 passed startup plus SGR wheel controls. The exact source-level bug and safe-size boundary remain unknown. Five recovered agents subsequently completed parallel news-retrieval/translation tasks and follow-up corrections, then were stopped on request. Discover current sessions before operating; later user-opened sessions are not disposable probes.
+- A live wrapper plus `cloud=connected` and an idle badge can outlast a remote TUI crash. Literal mouse/focus escape sequences may then echo. Verify visible application output, and avoid history reads that inject scrolling into a failed application. The opt-in `src/tests/live_layout_probe.py` reproduces viewport behavior in fresh disposable sessions.
+- Literal key echo can also indicate suspension, not a crash. Cloud-5 was observed with remote OpenCode in `T (stopped)` state; identity-checked `SIGCONT` restored the same process/chat. The `exec` launcher leaves no parent shell for `fg`. Distinguish Unix process suspension, agent idle, and stopped AgentCore compute before choosing a recovery action.
+- Basic concurrent prompting and result collection are verified. Durable workflow recovery, approval dialogs, forced network outages, small-viewport protection, the full pane resize/layout matrix, long-idle/max-lifetime behavior, and persistent coding-state recovery remain unverified or unresolved.
 - No EC2/ECS management deployment, laptop sleep/reboot validation, or automatic management-host recovery has been implemented or verified.
 - The Linux/macOS Python 3.11/3.13 CI matrix is configured; remote CI execution and GitHub-managed install/update validation remain pending.
 - Publication and marketplace listing have not occurred. A public repository with a valid manifest and the `herdr-plugin` topic is the community distribution route; official endorsement is separate.
 
-Prioritize live terminal validation and the persistent coding-file requirements (P01–P07), then the EC2 management model (H01–H09). Extend binding records with persistent home/cwd, integrate S3 Files and runtime bootstrap/process supervision, and capture OpenCode conversation state. Implement the lifecycle increment (L01–L12): resume, Herdr rebinding, host reconciliation, additional shells, and scoped stop operations. Handle stop completion and retryable provisioning/stop conflicts; the current connector treats non-429 HTTP 4xx responses as terminal. Recovery must not duplicate a launch, tool request, or coordination step.
+Build on the verified single-agent live path: prioritize persistent coding-file requirements (P01–P07) and the remaining multi-agent/lifecycle acceptance cases, then the EC2 management model (H01–H09). Extend binding records with persistent home/cwd, integrate S3 Files and runtime bootstrap/process supervision, and capture OpenCode conversation state. Implement the lifecycle increment (L01–L12): resume, Herdr rebinding, host reconciliation, additional shells, and scoped stop operations. Handle stop completion and retryable provisioning/stop conflicts; the current connector treats non-429 HTTP 4xx responses as terminal. Recovery must not duplicate a launch, tool request, or coordination step.
 
 The current prototype has no S3 Files-backed home/cwd integration, persisted OpenCode conversation ID, additional-shell workflow, recovery supervisor, explicit resume/archive action, or management-host deployment/reconciliation. These are design targets, not verified capabilities. The copied sample's S3 Files mount for shared tools does not establish coding-state persistence. Keep direct AWS IAM authentication; do not add Jindouyun authentication/control-plane dependencies while implementing these gaps.
 

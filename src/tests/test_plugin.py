@@ -70,6 +70,29 @@ def test_action_without_context_never_targets_an_unrelated_focused_pane(monkeypa
         herdr.open_action("attach")
 
 
+def test_quiet_herdr_commands_use_exit_status_not_json(monkeypatch):
+    monkeypatch.setenv("HERDR_ENV", "1")
+
+    def run(argv, **kwargs):
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    assert herdr.command("pane", "report-metadata", expect_json=False) == {}
+    with pytest.raises(UserError, match="invalid JSON"):
+        herdr.command("plugin", "pane", "open")
+
+
+def test_quiet_herdr_command_errors_are_not_accepted(monkeypatch):
+    monkeypatch.setenv("HERDR_ENV", "1")
+
+    def run(argv, **kwargs):
+        return subprocess.CompletedProcess(argv, 1, "", "pane_not_found")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    with pytest.raises(UserError, match="pane_not_found"):
+        herdr.command("pane", "report-metadata", expect_json=False)
+
+
 def test_import_sample_configuration_does_not_copy_secrets(tmp_path):
     imported = tmp_path / "runtime.json"
     imported.write_text(json.dumps({"runtime_arn": ARN, "other": "must-not-be-imported"}))

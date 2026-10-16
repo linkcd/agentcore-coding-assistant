@@ -14,6 +14,21 @@ dist/
 # Runtime configuration and credentials belong outside this repository.
 .env
 .env.*
-runtime_config.json
+runtime_config*.json
 agent.config
 infra.config
+.deployed-state.json
+.aws/
+credentials
+credentials.json
+*.pem
+*.key
+*.p12
+*.pfx
+*.local.json
+*.log
+/config.json
+/connections/
+/state/
+/test-artifacts/
+.local/

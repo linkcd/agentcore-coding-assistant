@@ -138,12 +138,13 @@ Outside the plugin's product scope: Cognito/end-user authentication, per-user Ru
 
 | Area | Required outcome | Current evidence |
 | --- | --- | --- |
-| Plugin contract | Herdr accepts the manifest and its declared commands match implemented entrypoints. | Offline tests and isolated Herdr 0.9.5 registry validation. |
-| Terminal transport | Input/output bytes and resize messages survive a round trip. Local terminal modes restore on failure. | Local WebSocket and POSIX PTY tests. |
-| Session identity | Reconnect uses the original runtime-session/shell pair without another launch. | Offline transport and persistence tests. |
+| Plugin contract | Herdr accepts the manifest and its declared commands match implemented entrypoints. | Offline tests, isolated Herdr 0.9.5 registry validation, and live new/attach/stop actions. |
+| Terminal transport | Input/output bytes and resize messages survive a round trip. Local terminal modes restore on failure. | Live AgentCore shell input/output and resize before/after reconnect; local WebSocket/PTY tests. Full pane-layout/resize matrix pending. |
+| Session identity | Reconnect uses the original runtime-session/shell pair without another launch. | Live same-PID/environment reattach and an OpenCode follow-up turn retaining conversation context; offline tests. |
 | Failure handling | Uncertain input is not replayed; takeover stops retries; a missing original PTY does not trigger another agent launch. | Offline tests. |
 | Storage and updates | Records remain outside the installation; locks prevent concurrent attachment; profile changes do not retarget saved sessions. | Offline storage tests; live update test pending. |
-| Real cloud workflow | Multiple remote OpenCode TUIs work in Herdr, including prompting, dialogs, status detection, resize, detach, reconnect, and stop. | Pending live AgentCore validation. |
+| Real cloud workflow | Multiple remote OpenCode TUIs work in Herdr, including prompting, dialogs, status detection, resize, detach, reconnect, and stop. | Single-agent prompt/wait/read, detach/reattach, follow-up turn, and stop passed. Five distinct sessions completed concurrent news retrieval/translation, result collection, follow-up prompts, and requested cleanup. Small tiled viewports exposed an OpenCode/Bun crash; dialogs, interrupted-network behavior, and durable workflow recovery remain pending. |
+| Small-viewport failure | A failed remote TUI must not be mistaken for a healthy idle agent or receive uncontrolled terminal input. | Known gap: OpenCode 1.18.30/Bun 1.3.14 crashes at 35×20 before mouse input, while the connector can remain connected. Zoomed view is the current workaround; process-aware failure handling is pending. |
 | Platform compatibility | Supported Python versions pass on macOS and Linux. | Local Python 3.13/macOS verified; CI matrix configured, remote CI pending. |
 | Clean execution | A new independent binding gets fresh compute and its own persistent-home namespace by default; explicitly selected existing files are preserved. | Pending S3 Files home/bootstrap integration and live validation. |
 | Process recovery | Resume after OpenCode exits preserves execution binding, files, and conversation while using a new process/PTY. | Not implemented. |
@@ -160,7 +161,7 @@ Outside the plugin's product scope: Cognito/end-user authentication, per-user Ru
 
 ## Follow-up priorities
 
-1. Validate the terminal workflow against a deployed runtime and record actual OpenCode/version compatibility.
+1. Extend the verified single-agent and five-agent live workflows to dialogs, forced network outages, durable coordination recovery, and the full pane resize/layout matrix; preserve the tested version baseline.
 2. Extend version-1 records into Herdr-native execution bindings with persistent-home and remote Working Directory paths; preserve existing records through migration.
 3. Integrate the configured S3 Files mount, persistent OpenCode/configuration/skills paths, and runtime-side bootstrap/process supervision. Validate file persistence before implementing recovery claims.
 4. Establish a single EC2 management host with supervised Herdr, host-installed plugin, instance-role credentials, and persistent management state. Validate laptop sleep/reboot and remote plugin actions.

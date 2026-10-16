@@ -396,7 +396,7 @@ AgentCore microVM lifetime and idle limits still apply. Reattaching after expiry
 
 ## Implementation increments
 
-1. Validate the existing terminal bridge against a deployed runtime.
+1. Extend the verified single-agent and five-agent workflows to the remaining durable orchestration, dialog, network-outage, and pane-layout acceptance cases.
 2. Extend host-local execution bindings with S3 Files persistent-home/cwd and conversation metadata, keeping existing records readable through migration.
 3. Integrate the configured S3 Files mount and runtime-side persistent-home bootstrap/process supervision; validate repositories, configuration, skills, and OpenCode database persistence.
 4. Establish the single-EC2 management deployment: supervised Herdr, host-installed plugin, instance role, persistent management state, and laptop SSH attachment. Test laptop sleep/reboot while agents are running.
@@ -422,6 +422,66 @@ uv build
 ```
 
 The optional `HERDR_TEST_BINARY` environment variable enables manifest validation with an installed Herdr binary in an isolated registry. Tests otherwise use fake transports, a local WebSocket server, and a local PTY. Live AWS behavior is assessed separately against the acceptance criteria in [REQUIREMENTS.md](REQUIREMENTS.md).
+
+### Live validation — 2026-10-16
+
+An externally configured OpenCode runtime was tested with Herdr 0.9.5, OpenCode 1.18.30, and Bedrock Claude Sonnet 4.5. The tests created fresh runtime session IDs and disposable local Herdr servers with isolated configuration, state, and sockets. Every disposable test session/server was stopped; the caller's Herdr server remained running. Actual account, runtime, gateway, storage, and session identifiers are deliberately excluded from this repository.
+
+Verified:
+
+- Authenticated AgentCore Shell connection, command input/output, and remote terminal sizes of 88×25 and 100×35.
+- Detach and reconnect with the same shell PID and environment variable, confirming original PTY continuity.
+- Plugin `new` action, runtime selection, OpenCode recognition, and `agent prompt --wait` producing the expected model response.
+- Plugin `attach` action followed by a second model turn that retained the previous conversation context.
+- Plugin `stop` action and explicit confirmation stopping the test runtime session.
+- The runtime's `/mnt/s3files` directory was present. This did not test persistent coding files or OpenCode database recovery.
+
+The live tests exposed a response-handling issue: Herdr's quiet commands, including `pane report-metadata`, succeed with empty stdout. The wrapper now uses exit status for those commands while retaining JSON validation for commands that return structured results. Offline regression tests cover both response modes.
+
+AgentCore reattachment also replays earlier terminal output. The shell probe must select the latest result preceding its unique completion marker rather than mistake a replayed size for the new size.
+
+The opt-in probes are ordinary scripts under `src/tests/`, excluded from automatic pytest discovery. After authorizing a live test against a selected runtime:
+
+```bash
+uv run python src/tests/live_agentcore_smoke.py --runtime-arn "$RUNTIME_ARN"
+uv run python src/tests/live_herdr_smoke.py --runtime-arn "$RUNTIME_ARN"
+```
+
+Both accept an optional `--aws-profile`. They create and stop their own new sessions; the Herdr probe makes small model calls and must run from a Herdr-managed pane. Runtime/account identifiers are supplied at execution, not embedded in source. The probes keep terminal output in memory and print test diagnostics; they do not persist raw transcripts.
+
+### Concurrent startup and small-viewport failure — 2026-10-16
+
+Five independent AgentCore/OpenCode sessions were started and recognized in one Herdr tab. The initial narrow/short tiled layout exposed a native OpenCode 1.18.30 / Bun 1.3.14 Linux ARM64 segmentation fault. A controlled probe through a real local PTY, without a Herdr client or mouse input, reproduced the crash at 35 columns × 20 rows.
+
+| Probe dimensions | Before mouse input | After valid SGR wheel input |
+| --- | --- | --- |
+| 35×20 | Bun segmentation fault during startup | Not attempted after crash. |
+| 80×20 | OpenCode input widget ready. | No crash or literal wheel-event echo observed. |
+| 35×40 | OpenCode input widget ready. | No crash or literal wheel-event echo observed. |
+
+This establishes a size-sensitive native runtime failure; the precise OpenCode/Bun source-level defect and complete safe-size boundary are not identified. Literal `^[[<64;...M`, `^[[<65;...M`, and motion events appeared after failed TUIs. The controls do not support treating malformed mouse encoding as the initial cause in the reproduced case.
+
+Herdr can continue reporting the live Python wrapper as an idle OpenCode agent while the remote TUI has already failed and the shell has not yet closed. Therefore `cloud=connected` plus an idle badge is not sufficient proof of a healthy remote agent. Check visible output and eventually add process-aware failure reporting; do not invent successful completion from a quiet terminal.
+
+The five requested agents were recovered in the tab labeled `2` with zoomed terminal presentation and names `cloud-1` through `cloud-5`. Their distinct runtime session/shell IDs and ready TUIs were verified. They later completed the parallel workload described below and were stopped on request. Failed startup sessions and disposable diagnostic sessions were also stopped. Zooming is a workaround, not a renderer fix; very small unzoomed panes can reproduce the problem.
+
+The opt-in reproduction script is `src/tests/live_layout_probe.py`, accepting `--runtime-arn`, `--cols`, and `--rows`. It creates a fresh remote session, observes startup before sending mouse input, and cleans up its own process/session. It does not modify the user's Herdr panes. No upstream issue was filed or runtime image updated.
+
+### Suspended process with literal key echo — separate observed case
+
+A later cloud-5 incident showed the launcher history and literal Escape/arrow-key characters instead of the TUI. Read-only process inspection through `InvokeAgentRuntimeCommand` confirmed that OpenCode was in `T (stopped)` state, consistent with process suspension such as Ctrl+Z. This was not evidence of another renderer crash.
+
+After validating the process identity and stopped state, sending `SIGCONT` to that same process restored its existing chat UI and conversation. A subsequent inspection showed normal `S (sleeping)` wait state. Typed characters remained in the input draft; no replacement agent or conversation was created.
+
+The current launcher replaces the remote shell with OpenCode using `exec`, so an interactive parent shell is not available to process a normal `fg` command. Future lifecycle support should distinguish process suspension from agent idle, process exit, and stopped AgentCore compute. Hook events need complementary process-state/liveness reporting; `cloud=connected` and screen-based idle fallback were insufficient in this case too.
+
+### Parallel workload validation — 2026-10-16
+
+Five live cloud agents each fetched a different public news feed and translated ten headlines into Chinese. Prompts were submitted concurrently through Herdr, all five completed, and their results were read back through the agent API. Follow-up prompts corrected a translation and refreshed changed feed entries. This verified basic concurrent work, result collection, and continued conversation across five isolated AgentCore sessions.
+
+On request, all five connectors were detached, each runtime session was stopped successfully, and Herdr's agent list no longer contained the five workers. Deployment configuration and individual session IDs remain outside the repository. This exercise does not establish durable orchestration recovery or an unattended cloud management deployment.
+
+Still pending: durable workflow recovery, permission/question dialogs, forced network outages, a fix or protective handling for small viewports, the full Herdr resize/layout matrix, laptop sleep/reboot, long-idle or maximum-lifetime behavior, S3 Files-backed coding-state persistence, and the EC2 management deployment.
 
 ## Upstream references
 

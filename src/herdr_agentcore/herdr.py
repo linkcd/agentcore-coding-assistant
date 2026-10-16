@@ -11,13 +11,15 @@ from .storage import UserError
 PLUGIN_ID = "agentcore"
 
 
-def command(*args: str, timeout: float = 10) -> dict:
+def command(*args: str, timeout: float = 10, expect_json: bool = True) -> dict:
     if os.environ.get("HERDR_ENV") != "1":
         raise UserError("Run this action inside Herdr.")
     binary = os.environ.get("HERDR_BIN_PATH", "herdr")
     result = subprocess.run([binary, *args], capture_output=True, text=True, timeout=timeout)
     if result.returncode:
         raise UserError(result.stderr.strip() or result.stdout.strip() or "Herdr command failed.")
+    if not expect_json:
+        return {}
     try:
         reply = json.loads(result.stdout)
     except ValueError as exc:
@@ -63,6 +65,7 @@ def report_connection(identifier: str, status: str) -> None:
             "--token",
             f"connection={identifier[:8]}",
             timeout=2,
+            expect_json=False,
         )
     except (OSError, UserError, subprocess.TimeoutExpired):
         pass
