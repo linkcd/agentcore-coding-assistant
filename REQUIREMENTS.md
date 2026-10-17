@@ -19,9 +19,9 @@ Jindouyun is a reference for execution concepts only. The plugin does not depend
 
 ## Deployment target
 
-**Laptop Herdr client → SSH → EC2 Herdr management server and connectors → AgentCore coding-agent sessions.**
+**Terminal/browser access → EC2-hosted Herdr server, connectors, and master/coordinator → AgentCore coding-agent sessions.**
 
-Use a single always-on EC2 management host for the first cloud deployment, taking advantage of Herdr's existing SSH remote-machine support. Install and configure the plugin on that host, where actions execute. Coordination workflows must also execute there to progress while the laptop is offline.
+The goal is to run the execution and coordination stack entirely in AWS. Use a single always-on EC2 management host for the first cloud deployment. Install and configure the plugin there, where actions execute, and run coordination there so it progresses while the laptop is offline. Access can use a standard SSM shell with the EC2-side Herdr TUI or native Herdr SSH remote-machine support; that choice does not change host-to-AgentCore authentication.
 
 ECS is an alternative deployment target requiring a compatible remote-access transport, external state storage, and task-replacement recovery. Neither the EC2 deployment nor an ECS-specific integration has been implemented or tested by this repository yet.
 
@@ -64,6 +64,7 @@ Only the new-agent and live-PTY reattachment paths are implemented in the curren
 | F15 | Provision ECR, an execution role, and an IAM-authenticated AgentCore runtime; publish a pinned ARM64 image and save a connector profile only after deployment completes. |
 | F16 | Use the runtime execution role and an expiration-aware SDK credential provider for Bedrock. Do not fetch, export, or persist credential snapshots in the owned launcher. Keep deployment authentication separate. |
 | F17 | Provide an offline deployment plan, explicit updates to owned stacks, bounded deployment waits, and CloudFormation failure/cleanup guidance. Retain existing profile and session state on failed provisioning. |
+| F18 | Start new cloud agents without a profile picker. Honor an explicit controller/CLI profile override first, otherwise use a configured default. Persist the default independently of profiles and existing connection snapshots; reject invalid or ambiguous selection before creating remote work. |
 
 ## Lifecycle requirements — next increment
 
@@ -101,14 +102,15 @@ S3 Files is the primary persistence target. Managed per-session storage Preview 
 | ID | Requirement |
 | --- | --- |
 | H01 | Run the Herdr background server and AgentCore connectors on an always-on management host; recommend EC2 for the initial deployment. |
-| H02 | Use Herdr's native SSH remote-machine connection from the laptop. Laptop disconnect, sleep, or reboot must not intentionally terminate the management server, connectors, or runtime sessions. |
-| H03 | Install the plugin, dependencies, and runtime profiles on the management host. Use an EC2 instance role for connector AWS access rather than depending on laptop-supplied credentials. |
+| H02 | Keep EC2 access independent of the connector: standard SSM access can run the TUI on EC2, while native Herdr remote-machine access uses SSH. Laptop disconnect, sleep, or reboot must not intentionally terminate the management server, connectors, or runtime sessions. |
+| H03 | Install the plugin, dependencies, and runtime profiles on the management host. Use an EC2 instance role through the existing SDK credential chain and SigV4 authentication; no plugin authentication-protocol change or laptop credential forwarding is required. |
 | H04 | Persist Herdr configuration/session state and plugin profiles/execution bindings on retained storage outside ephemeral installations. Define retention, backup, and reattachment behavior for host replacement. |
 | H05 | Supervise the Herdr server with a service manager. Restarting the server must reconcile surviving cloud sessions before creating replacement attachments; never assume restarting a service restores old processes. |
 | H06 | Place any autonomous coordination workflow on the cloud management host or another cloud service. Persist its progress and make recovery idempotent; work that depends on laptop-side logic pauses when the laptop is offline. |
 | H07 | Keep management-host recovery separate from AgentCore compute/conversation recovery. AgentCore idle/max-lifetime policies still apply while the management host is running. |
 | H08 | Begin with one active management host. Before adding failover or multiple controllers, implement controller leases to prevent competing connectors and duplicate orchestration. |
 | H09 | For an ECS deployment, supply a compatible remote-access endpoint, persistent external state, and task-replacement reconciliation. Do not assume ECS Exec provides Herdr's SSH transport or that service replacement preserves sockets/processes. |
+| H10 | Support operation without operator-managed static SSH key pairs or long-lived IAM user access keys. Keep human federated access, EC2 connector authorization, and AgentCore execution-role authorization separate. |
 
 ## Design constraints
 
@@ -144,6 +146,7 @@ Outside the plugin's product scope: Cognito/end-user authentication, per-user Ru
 | Area | Required outcome | Current evidence |
 | --- | --- | --- |
 | Plugin contract | Herdr accepts the manifest and its declared commands match implemented entrypoints. | Offline tests, isolated Herdr 0.9.5 registry validation, and live new/attach/stop actions. |
+| New-agent selection | A master agent can specify the runtime profile; otherwise new-agent actions start the default without asking the user. | Offline tests cover CLI/environment/default precedence, legacy configuration, bad overrides, and snapshot preservation. An isolated live Herdr run with two profiles started the intended default without selection input, then passed model/reattach/follow-up/stop checks. |
 | Owned runtime provisioning | Build and deploy the included image with role-based Bedrock access, then connect using its saved profile. | AWS deployment and image update passed. Herdr model turn, process environment without static credentials or the compatibility shim, detach/reattach, context-aware follow-up, and test-session stop all passed. Full post-expiry credential rotation remains pending. |
 | Runtime lifecycle | Document per-session limits; report actual active work as `HealthyBusy`; distinguish detachment, stop, and recoverable state. | Deployed idle timeout is 900 seconds and maximum lifetime 28,800 seconds, with no persistent filesystem. Cloud tests verified busy/idle transitions during real OpenCode shell work, Bedrock generation, and process death. Full-duration idle/max-lifetime tests remain pending. |
 | Waiting for input | A permission/question wait is idle when no other tracked work is active; a reply resumes busy reporting until the turn finishes. | A real Bedrock question/wait/reply/completion cycle passed against the deployed health endpoint. Event regression tests additionally cover permission waits, multiple requests, other active sessions, and the 16-minute-work/15-minute-idle timeline. Actual AWS termination timing remains unverified. |

@@ -31,6 +31,7 @@ def test_manifest_entrypoints_and_package_versions_match():
 
 
 def test_action_uses_explicit_context_and_public_plugin_pane_api(monkeypatch):
+    monkeypatch.delenv(herdr.PROFILE_ENV, raising=False)
     monkeypatch.setenv("HERDR_PLUGIN_CONTEXT_JSON", json.dumps({"focused_pane_id": "w9:p8"}))
     monkeypatch.setenv("HERDR_PANE_ID", "w1:p1")
     monkeypatch.setenv("HERDR_ENV", "1")

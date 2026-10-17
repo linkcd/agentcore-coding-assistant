@@ -31,7 +31,7 @@ def plain_text(value: str, label: str) -> str:
 
 
 def profile_name(value: str) -> str:
-    if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}", value):
+    if not isinstance(value, str) or not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}", value):
         raise UserError("Profile names must use 1–64 letters, numbers, underscores, or hyphens.")
     return value
 
@@ -160,34 +160,75 @@ class Store:
     def __init__(self, paths: Paths):
         self.paths = paths
 
-    def profiles(self) -> dict[str, Profile]:
+    def _configuration(self) -> tuple[dict, dict[str, Profile]]:
         path = self.paths.config / "config.json"
         if not path.exists():
-            return {}
-        data = read_json(path).get("profiles")
-        if not isinstance(data, dict):
+            return {"version": 1, "profiles": {}}, {}
+        data = read_json(path)
+        profiles = data.get("profiles")
+        if not isinstance(profiles, dict):
             raise UserError(f"Expected a profiles object in {path}.")
-        return {profile_name(name): Profile.from_dict(value) for name, value in data.items()}
+        if "default_profile" in data:
+            profile_name(data["default_profile"])
+        return data, {
+            profile_name(name): Profile.from_dict(value) for name, value in profiles.items()
+        }
+
+    def profiles(self) -> dict[str, Profile]:
+        return self._configuration()[1]
+
+    @staticmethod
+    def _select_profile(data: dict, profiles: dict[str, Profile], requested: str | None) -> str:
+        if requested is None:
+            if "default_profile" in data:
+                requested = data["default_profile"]
+            elif "default" in profiles:
+                requested = "default"
+            elif len(profiles) == 1:
+                requested = next(iter(profiles))
+            elif not profiles:
+                raise UserError("No runtime profiles. Configure or provision a runtime first.")
+            else:
+                raise UserError(
+                    "Multiple runtime profiles have no default. Run 'set-default PROFILE' "
+                    "or supply --profile for this launch."
+                )
+        profile_name(requested)
+        if requested not in profiles:
+            raise UserError(
+                f"Unknown runtime profile '{requested}'. Check profiles or set-default."
+            )
+        return requested
+
+    def resolve_profile(self, requested: str | None = None) -> str:
+        data, profiles = self._configuration()
+        return self._select_profile(data, profiles, requested)
+
+    def set_default(self, name: str) -> None:
+        profile_name(name)
+        with exclusive_lock(self.paths.config / "config.lock"):
+            data, profiles = self._configuration()
+            data["default_profile"] = self._select_profile(data, profiles, name)
+            atomic_json(self.paths.config / "config.json", data)
 
     def save_profile(self, name: str, profile: Profile, replace: bool = False) -> None:
         profile_name(name)
         with exclusive_lock(self.paths.config / "config.lock"):
-            profiles = self.profiles()
+            data, profiles = self._configuration()
             if name in profiles and not replace:
                 raise UserError(f"Profile '{name}' already exists. Use --replace to update it.")
+            if "default_profile" not in data:
+                if not profiles:
+                    data["default_profile"] = name
+                elif "default" in profiles or len(profiles) == 1:
+                    data["default_profile"] = self._select_profile(data, profiles, None)
             profiles[name] = profile
-            atomic_json(
-                self.paths.config / "config.json",
-                {
-                    "version": 1,
-                    "profiles": {key: asdict(value) for key, value in profiles.items()},
-                },
-            )
+            data["profiles"] = {key: asdict(value) for key, value in profiles.items()}
+            atomic_json(self.paths.config / "config.json", data)
 
-    def create(self, profile_key: str, name: str | None = None) -> dict:
-        profiles = self.profiles()
-        if profile_key not in profiles:
-            raise UserError(f"Unknown profile '{profile_key}'. Run the setup action first.")
+    def create(self, profile_key: str | None = None, name: str | None = None) -> dict:
+        data, profiles = self._configuration()
+        profile_key = self._select_profile(data, profiles, profile_key)
         identifier = str(uuid.uuid4())
         record = {
             "version": 1,

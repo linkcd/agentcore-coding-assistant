@@ -21,7 +21,7 @@ Jindouyun is a reference for missing execution concepts: persistent coding files
 
 The default remains one runtime session and one shell per independently isolated agent. Additional helper or agent shells within an existing runtime session are a planned extension; one-agent-per-session is not a universal identity rule.
 
-**Deployment decision:** for management that continues while the laptop sleeps or reboots, run the Herdr background server, connectors, and coordinating workflows on an always-on cloud host. Start with one EC2 host and Herdr's native SSH remote-machine support. Keep the laptop as a client and OpenCode execution in AgentCore. This cloud deployment has not yet been validated.
+**Deployment decision:** host the execution stack in AWS: Herdr's background server, connectors, and master/coordinating workflows on one always-on EC2 host, with OpenCode workers in AgentCore. The laptop is an access/viewing endpoint. EC2 access is independent of the plugin's AgentCore authentication; standard SSM shells can run the EC2-side Herdr TUI, while native Herdr remote-machine access uses SSH. This EC2 hosting path has not yet been validated.
 
 ## Architecture
 
@@ -86,7 +86,9 @@ flowchart LR
 
 The SSH connection and AgentCore WebSockets have independent owners. Closing the laptop connection leaves the EC2 server and connectors running. Laptop-side controls and live viewing pause until reconnect; cloud-side workflows can continue if they actually run on the management host or another cloud service.
 
-Install Herdr, the plugin, Python/uv dependencies, and runtime profiles on the EC2 host. Herdr's remote-machine connection does not copy local plugins or configuration there. With an existing SSH host alias, the laptop can register the server using the standard command:
+The diagram above illustrates the native Herdr SSH access option. For keyless standard SSM access, the local terminal/browser instead connects to an EC2 shell and runs the Herdr TUI there, attached to the same independently supervised server. This does not require an SSM transport inside the AgentCore plugin. SSH-over-SSM alone does not remove SSH authentication requirements. See the [cloud-hosting discussion](SESSION_MANAGEMENT_PROPOSAL.md#11-full-cloud-placement-and-responsibility).
+
+Install Herdr, the plugin, Python/uv dependencies, and runtime profiles on the EC2 host. Herdr's remote-machine connection does not copy local plugins or configuration there. If choosing native SSH access, the laptop can register an existing SSH host alias using the standard command:
 
 ```bash
 herdr machine add cloudbox
@@ -98,7 +100,7 @@ This is a setup example, not a command already executed or a deployed resource. 
 
 | Concern | EC2 — first deployment | ECS — alternative |
 | --- | --- | --- |
-| Remote client access | Existing SSH access fits Herdr's saved-machine transport. | Provide an SSH endpoint or another compatible bridge; ECS Exec is not assumed to implement the transport. |
+| Remote client access | Standard SSM shell to the EC2-side TUI, or SSH for Herdr's native saved-machine transport. | Provide a compatible access path; ECS Exec is not assumed to implement Herdr's SSH transport. |
 | Long-running management | Supervise the Herdr server with a service manager such as systemd. | An ECS service maintains task availability, but task replacement terminates the old server/connectors. |
 | Durable state | Retained EBS-backed storage with explicit retention, backup, and reattachment policies. | External persistent storage, for example EFS, with validated filesystem/locking behavior. |
 | AWS authentication | Instance-role credentials resolved through the normal AWS credential chain. | Task-role credentials resolved through the normal AWS credential chain. |
@@ -111,7 +113,7 @@ Start with one active management host. An additional host is not automatically s
 
 Persist Herdr configuration and saved session/layout state, the plugin's config directory, and its execution-binding records on the management host. Installation trees remain replaceable. Keep live IPC sockets and process-specific files on the host's local runtime filesystem. Persisted state must be reachable after the planned host replacement; a volume's mere existence is not a recovery policy.
 
-The connector uses the management host's instance role for AgentCore access. OpenCode uses its AgentCore execution role for model/tools access. Laptop SSH authentication is a third, separate boundary. Do not require an active laptop credential-forwarding process to keep the cloud connectors authorized.
+The connector uses the management host's instance role for AgentCore access. OpenCode uses its AgentCore execution role for model/tools access. Human EC2 access authentication is a third, separate boundary. The current plugin's Boto3 credential chain and SigV4 WebSocket code require no authentication-protocol changes for EC2: use `aws_profile: null`, attach the appropriate instance role, and keep its metadata provider reachable without conflicting credential overrides. Do not require static SSH/IAM-user keys or an active laptop credential-forwarding process to keep the cloud connectors authorized.
 
 Configure the service manager to start Herdr with the intended service user, environment, and persistent session. Starting the daemon restores service availability; automatic recovery of plugin connections and coordination progress requires an additional reconciliation workflow, which is not implemented yet.
 
@@ -207,7 +209,7 @@ After the image update, `live_herdr_smoke.py --check-runtime-role` passed agains
 The plugin defines five actions and corresponding pane entrypoints:
 
 - `agentcore.setup`: configure a runtime profile.
-- `agentcore.new`: choose a profile and start a cloud agent.
+- `agentcore.new`: start a cloud agent using the controller-selected or configured default profile.
 - `agentcore.attach`: reattach a saved connection.
 - `agentcore.sessions`: show last-known connection records.
 - `agentcore.stop`: explicitly stop compute for a detached runtime session.
@@ -223,6 +225,16 @@ An event-based lifecycle bridge is a follow-up: the standard OpenCode integratio
 Use plugin/pane actions to provision or attach remote execution, then use Herdr's existing `agent list`, `agent prompt`, `agent read`, `agent wait`, and `agent send-keys` surfaces once the agent is recognized. `agent start --kind opencode` selects the canonical executable; it is not an AgentCore provisioning API.
 
 A coordinating script or agent on the management host can drive multiple cloud-agent panes through these APIs. The plugin supplies execution and lifecycle support rather than a new workflow/control-plane service. Cloud workers do not automatically gain access to the management host's Herdr socket; a narrowly scoped bridge would be separate future work if workers need to issue Herdr commands directly.
+
+### Default and controller-selected runtime profiles
+
+The new-agent entrypoint launches directly instead of showing a profile picker. Resolution is: explicit `--profile` argument, then `HERDR_AGENTCORE_PROFILE` supplied by the controller, then the saved `default_profile` in the version-1 configuration. `herdr-agentcore action new --profile NAME` forwards the override to the server-owned pane through Herdr's public `--env` option; it does not assume that the server inherits the caller's environment. `new --profile NAME` and `menu new --profile NAME` use the same precedence. Other entrypoints reject an explicit profile override because attachment and stop must use the connection's recorded target.
+
+`set-default NAME` validates the saved profile and updates configuration atomically under the existing config lock. The first profile saved into empty configuration becomes the default. Further saves and updates preserve that preference. Selection and the connection's profile snapshot come from the same configuration read; changing the default does not retarget existing connections.
+
+Existing version-1 configurations remain readable. Without `default_profile`, a profile literally named `default` is the legacy fallback, or a single remaining profile is unambiguous. Multiple profiles without either require an explicit override or a one-time `set-default`; the plugin fails with guidance instead of guessing or prompting. A missing/invalid explicit selection never falls back to another deployment. The `profiles` command retains its existing output shape.
+
+Offline tests cover precedence, default preservation, invalid selections, and controller environment forwarding. The live probe configures two profiles, sends no selection input, and verifies the intended default is used. It also waits for detached plugin panes to close before invoking another action, avoiding a stale focused-pane target during asynchronous pane teardown. Model inference, role-environment inspection, reattachment, a context-aware follow-up, and test cleanup passed with automatic selection.
 
 ### Additional shells and operation scope — target
 

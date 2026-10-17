@@ -56,6 +56,8 @@ def parser() -> argparse.ArgumentParser:
     )
     configure.add_argument("--command", nargs=argparse.REMAINDER, default=["/app/run.sh"])
     commands.add_parser("profiles", parents=[common])
+    default = commands.add_parser("set-default", parents=[common])
+    default.add_argument("profile", help="Saved runtime profile used for new agents")
     sessions = commands.add_parser("sessions", parents=[common])
     sessions.add_argument("--json", action="store_true")
     stop = commands.add_parser("stop", parents=[common])
@@ -67,13 +69,14 @@ def parser() -> argparse.ArgumentParser:
         cmd = commands.add_parser(operation, parents=[common])
         cmd.add_argument("--reconnect-seconds", type=int, default=120)
         if operation == "new":
-            cmd.add_argument("--profile", default="default")
+            cmd.add_argument("--profile", help="Override the configured default runtime profile")
             cmd.add_argument("--name")
         else:
             cmd.add_argument("connection_id")
     for operation in ("action", "menu"):
         cmd = commands.add_parser(operation, parents=[common])
         cmd.add_argument("entrypoint", choices=["setup", "new", "attach", "sessions", "stop"])
+        cmd.add_argument("--profile", help="Runtime profile override for the new-agent entrypoint")
     return root
 
 
@@ -136,16 +139,18 @@ def exec_attach(store: Store, identifier: str):
     os.execve(sys.executable, argv, env)
 
 
-def menu(store: Store, entrypoint: str):
+def menu(store: Store, entrypoint: str, profile: str | None = None):
     if not sys.stdin.isatty():
         raise UserError("Open menus with the Herdr plugin action or pane command.")
+    if profile is not None and entrypoint != "new":
+        raise UserError("--profile is only supported for the new-agent entrypoint.")
     if entrypoint == "setup":
         return setup_menu(store)
     if entrypoint == "new":
-        name = choose(list(store.profiles()), str, "Runtime profile")
-        if name is not None:
-            record = store.create(name)
-            exec_attach(store, record["id"])
+        requested = profile if profile is not None else os.environ.get(herdr.PROFILE_ENV)
+        record = store.create(requested)
+        print(f"Using runtime profile: {record['profile_name']}", flush=True)
+        exec_attach(store, record["id"])
         return
     records = store.connections()
     if entrypoint == "sessions":
@@ -260,6 +265,9 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Saved profile {args.profile} to {store.paths.config / 'config.json'}")
         elif args.operation == "profiles":
             print(json.dumps({k: asdict(v) for k, v in store.profiles().items()}, indent=2))
+        elif args.operation == "set-default":
+            store.set_default(args.profile)
+            print(f"Default runtime profile: {args.profile}")
         elif args.operation == "sessions":
             records = store.connections()
             if args.json:
@@ -267,13 +275,13 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 print_sessions(records)
         elif args.operation == "action":
-            print(json.dumps(herdr.open_action(args.entrypoint)))
+            print(json.dumps(herdr.open_action(args.entrypoint, args.profile)))
         elif args.operation == "stop":
             if not args.yes:
                 raise UserError("Stopping terminates the runtime session; pass --yes to confirm.")
             stop_connection(store, args.connection_id)
         elif args.operation == "menu":
-            menu(store, args.entrypoint)
+            menu(store, args.entrypoint, args.profile)
         elif args.operation in {"new", "attach"}:
             if not sys.stdin.isatty() or not sys.stdout.isatty():
                 raise UserError("Interactive connection requires a terminal.")
@@ -289,11 +297,13 @@ def main(argv: list[str] | None = None) -> int:
                     ],
                     env,
                 )
-            identifier = (
-                store.create(args.profile, args.name)["id"]
-                if args.operation == "new"
-                else args.connection_id
-            )
+            if args.operation == "new":
+                requested = (
+                    args.profile if args.profile is not None else os.environ.get(herdr.PROFILE_ENV)
+                )
+                identifier = store.create(requested, args.name)["id"]
+            else:
+                identifier = args.connection_id
             return asyncio.run(connect(store, identifier, args.reconnect_seconds))
         return 0
     except (UserError, OSError, ValueError, subprocess.TimeoutExpired) as exc:

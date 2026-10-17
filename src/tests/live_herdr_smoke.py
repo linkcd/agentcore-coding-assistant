@@ -225,6 +225,16 @@ def run(
             state = Path(herdr.env["XDG_STATE_HOME"]) / "herdr" / "plugins" / "agentcore"
             store = Store(Paths(config, state))
             store.save_profile("live-smoke", profile)
+            store.save_profile(
+                "not-selected",
+                Profile.from_dict(
+                    {
+                        "runtime_arn": runtime_arn,
+                        "aws_profile": aws_profile,
+                        "command": ["/bin/false"],
+                    }
+                ),
+            )
             workspace = herdr.result(
                 "workspace", "create", "--cwd", temp, "--label", "AgentCore live smoke", "--focus"
             )
@@ -232,9 +242,12 @@ def run(
                 f"Created isolated workspace: {workspace['workspace']['workspace_id']}", flush=True
             )
             pane = herdr.action_pane("new")
-            until(lambda: "Runtime profile" in herdr.read(pane), "runtime picker", 15)
-            herdr.select_first(pane)
             record = until(lambda: next(iter(store.connections()), None), "connection record", 15)
+            if record["profile_name"] != "live-smoke":
+                raise UserError("New-agent action did not use the configured default profile.")
+            print(
+                "PASS: started the default profile without a picker or terminal input", flush=True
+            )
             print(f"Fresh test runtime session: {record['runtime_session_id']}", flush=True)
             until(lambda: store.load(record["id"])["status"] == "connected", "AgentCore connection")
             agent = until(lambda: herdr.agent(pane), "OpenCode recognized by Herdr")
@@ -286,6 +299,11 @@ def run(
             print("Completed screen:\n" + herdr.read(pane), flush=True)
             herdr.call("pane", "send-text", pane, "\x1dd")
             until(lambda: store.load(record["id"])["status"] == "detached", "connector detach", 15)
+            until(
+                lambda: all(p["pane_id"] != pane for p in herdr.panes()),
+                "detached pane closed before opening the next action",
+                15,
+            )
             print("PASS: detach without runtime stop", flush=True)
             pane = herdr.action_pane("attach")
             until(lambda: "Session [" in herdr.read(pane), "saved-session picker", 15)
@@ -338,6 +356,11 @@ def run(
             )
             herdr.call("pane", "send-text", pane, "\x1dd")
             until(lambda: store.load(record["id"])["status"] == "detached", "final detach", 15)
+            until(
+                lambda: all(p["pane_id"] != pane for p in herdr.panes()),
+                "detached pane closed before stop action",
+                15,
+            )
             pane = herdr.action_pane("stop")
             until(lambda: "Session [" in herdr.read(pane), "stop-session picker", 15)
             herdr.select_first(pane)

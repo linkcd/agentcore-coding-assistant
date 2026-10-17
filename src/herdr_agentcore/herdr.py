@@ -6,9 +6,10 @@ import json
 import os
 import subprocess
 
-from .storage import UserError
+from .storage import UserError, profile_name
 
 PLUGIN_ID = "agentcore"
+PROFILE_ENV = "HERDR_AGENTCORE_PROFILE"
 
 
 def command(*args: str, timeout: float = 10, expect_json: bool = True) -> dict:
@@ -30,9 +31,11 @@ def command(*args: str, timeout: float = 10, expect_json: bool = True) -> dict:
     return reply
 
 
-def open_action(entrypoint: str) -> dict:
+def open_action(entrypoint: str, profile: str | None = None) -> dict:
     if entrypoint not in {"new", "attach", "setup", "sessions", "stop"}:
         raise UserError("Unknown plugin action.")
+    if profile is not None and entrypoint != "new":
+        raise UserError("--profile is only supported for new-agent actions.")
     try:
         context = json.loads(os.environ.get("HERDR_PLUGIN_CONTEXT_JSON", "{}"))
     except ValueError as exc:
@@ -45,6 +48,12 @@ def open_action(entrypoint: str) -> dict:
         args += ["--placement", "tab", "--workspace", context["workspace_id"]]
     else:
         raise UserError("Open a Herdr workspace before invoking AgentCore actions.")
+    if entrypoint == "new":
+        selected = profile if profile is not None else os.environ.get(PROFILE_ENV)
+        if selected is not None:
+            # The server launches the pane, so explicitly forward the caller's
+            # override instead of relying on the daemon's launch environment.
+            args += ["--env", f"{PROFILE_ENV}={profile_name(selected)}"]
     return command(*args)
 
 

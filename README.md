@@ -43,10 +43,12 @@ uv run herdr-agentcore provision \
   --model-id anthropic.claude-sonnet-4-5-20250929-v1:0 \
   --profile owned-runtime \
   --config-dir "$(herdr plugin config-dir agentcore)"
+uv run herdr-agentcore set-default owned-runtime \
+  --config-dir "$(herdr plugin config-dir agentcore)"
 herdr plugin action invoke agentcore.new
 ```
 
-Select `owned-runtime` in the new-agent menu. Choose a model available to your AWS account/region; `--model-id` also accepts geographic system inference-profile IDs. The deployment identity needs CloudFormation, ECR, IAM/PassRole, and AgentCore provisioning permissions. Use `--aws-profile` to select that management-host identity.
+The new-agent action starts `owned-runtime` immediately, without a profile picker. Choose a model available to your AWS account/region; `--model-id` also accepts geographic system inference-profile IDs. The deployment identity needs CloudFormation, ECR, IAM/PassRole, and AgentCore provisioning permissions. Use `--aws-profile` to select that management-host identity.
 
 Add `--plan` to print the two CloudFormation templates without contacting AWS or Docker. To update this deployment and its saved profile, rerun with `--update --replace`; `--opencode-version` selects another pinned release. Updates require new OpenCode processes to use the new image/configuration. See [provisioning design](DESIGN.md#repository-owned-runtime-and-provisioning) for stack ownership, failure recovery, and cleanup.
 
@@ -67,10 +69,20 @@ Setup asks for **your own** runtime ARN, optional management-host AWS profile, e
 
 | Action | Purpose |
 | --- | --- |
-| `herdr plugin action invoke agentcore.new` | Select a profile and start a new cloud agent |
+| `herdr plugin action invoke agentcore.new` | Start a new cloud agent using the configured default profile |
 | `herdr plugin action invoke agentcore.attach` | Reattach an existing live remote terminal |
 | `herdr plugin action invoke agentcore.sessions` | Inspect saved, last-known session records |
 | `herdr plugin action invoke agentcore.stop` | Confirm and stop a detached runtime session |
+
+**Profile selection is automatic:** an explicit master-agent override takes priority, otherwise the saved default is used. The first profile saved by setup/configure/provision becomes the default; adding or updating another profile does not change it. Use `set-default PROFILE` with the plugin config directory to change that preference.
+
+A master agent can choose a profile for one launch without changing the default:
+
+```bash
+uv run herdr-agentcore action new --profile owned-runtime
+```
+
+The terminal CLI also accepts `new --profile PROFILE`. For direct `herdr plugin pane open` calls, pass `--env HERDR_AGENTCORE_PROFILE=PROFILE`. Invalid overrides fail rather than silently selecting a different runtime. Older configurations with multiple profiles and no unambiguous default need `set-default` once; new sessions never show a profile-selection menu.
 
 **Detach:** hold Ctrl and press `]`, release both, then press `d`. Detach leaves remote work subject to AgentCore lifecycle limits. Stop is a separate operation. After the runtime's compute has ended, conversation/workspace reconstruction is not yet supported.
 
