@@ -321,6 +321,18 @@ Both temporary stacks were destroyed, and control-plane lookups confirmed that b
 The OpenCode stack's first deletion timed out in the CloudFormation resource handler. After confirming the runtime was already absent, a second `cdk destroy` completed.
 Shared CDK asset storage remains under its normal retention policy. The existing default deployment stayed READY; the temporary test deployments were not promoted to it.
 
+### Persistent deployments after qualification
+
+After committing the implementation, both named profiles were deployed as persistent CDK stacks in `eu-west-1`.
+The OpenCode runtime and DEFAULT endpoint reached version 2 and READY. Codex reached version 1 and READY.
+Codex continues to use its declared `us-east-2` Mantle inference endpoint.
+Herdr was reinstalled and relinked to the committed connector, then registered `opencode-agentcore-runtime` and `codex-agentcore-runtime` from CDK outputs.
+The default connection profile remains OpenCode.
+
+Fresh sessions on both persistent deployments passed real model calls, native recognition, credential inspection, detach/attachment, conversation continuity, and stop requests.
+OpenCode also passed work/question/reply and process-death health checks on the persistent deployment.
+The probes stopped only their disposable sessions and isolated Herdr servers. The two runtime deployments remain available.
+
 ### Earlier deployed baseline
 
 The `opencode` settings were deployed through official CDK in place of the old custom-managed runtime.

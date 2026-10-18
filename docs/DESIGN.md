@@ -732,6 +732,10 @@ Both temporary stacks and runtimes were confirmed deleted. One native CloudForma
 Detailed findings and warnings are recorded in the runtime root README. The historical sections below describe prior implementations.
 The refactor passed 180 Python tests with both rebuilt images, six CDK tests, and TypeScript checks.
 The full assistant comparison and Herdr detection evidence are maintained only in the runtime root README.
+After disposable qualification and commit, the shared images were deployed to persistent OpenCode and Codex stacks.
+Both runtimes and their DEFAULT endpoints reached READY. Herdr imported both CDK output descriptors and retained OpenCode as its default.
+New sessions on both persistent deployments passed the model/role/attachment/follow-up/stop probe. OpenCode's activity-health probe also passed.
+The persistent deployments remain available after cleanup of the probes' own sessions and servers.
 
 Herdr installs from a public GitHub repository with a root manifest.
 The build command is `uv sync --frozen --no-dev`; it installs only the connector and its dependencies, including the contract.

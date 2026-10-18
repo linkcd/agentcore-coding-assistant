@@ -152,6 +152,8 @@ The previous custom-provisioned runtime and its owned stacks were removed. Its E
 Both shared-image examples passed cloud E2E tests on disposable runtimes: real model calls, Herdr recognition, detach/attachment, conversation continuity, and stop requests.
 OpenCode also passed cloud work/question/reply health tests. Codex still has no runtime work-event reporter, and sandbox/tool execution remains unverified.
 The temporary stacks were removed. These tests did not replace the existing default deployment.
+After that qualification, both shared-image profiles were deployed as persistent CDK stacks and passed fresh E2E checks.
+Herdr uses the committed connector with `opencode-agentcore-runtime` and `codex-agentcore-runtime`; OpenCode remains the default.
 Earlier cloud tests used Herdr 0.9.5, OpenCode 1.18.30, and AgentCore SDK 1.24.1.
 They verified deployment/update, role-based Bedrock calls, default selection, attachment, conversation continuity, and activity health.
 

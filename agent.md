@@ -193,6 +193,10 @@ Reject known update dialogs before sending model prompts. Wait for detached pane
 
 ## Current evidence and next work
 
+- The implementation was committed, then deployed as persistent OpenCode and Codex CDK stacks in `eu-west-1`. OpenCode reached runtime/endpoint version 2; Codex reached version 1; both are READY.
+- Herdr was reinstalled/relinked to the committed connector. Both connection profiles were imported from CDK outputs, with OpenCode retained as default.
+- Fresh persistent-deployment E2E probes passed both model/role/recognition/attachment/follow-up/stop flows. OpenCode activity health also passed. Only the probe sessions and isolated servers were stopped.
+- Final pre-commit checks passed 183 Python tests with both image-test flags, six CDK tests, package checks, and privacy checks.
 - The shared-image refactor unifies the example directory layout, Dockerfile, startup, environment handling, and health service. CDK staging isolates each selected adapter.
 - Both refactored ARM64 images built successfully. The current change passed 180 Python tests with those images, six CDK tests, and TypeScript checks.
 - Herdr 0.9.5 native support for both examples was confirmed from the installed CLI, official integration documentation, and pinned manifests. The runtime README records the exact detection basis and limitations.
