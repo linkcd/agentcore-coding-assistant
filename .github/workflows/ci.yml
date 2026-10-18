@@ -1,4 +1,4 @@
-name: Plugin checks
+name: Component checks
 on:
   push:
   pull_request:
@@ -20,13 +20,21 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: ${{ matrix.python }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
       - run: uv sync --frozen
+      - run: npm ci --prefix src/agentcore_runtime
+      - run: npm run check --prefix src/agentcore_runtime
+      - run: npm test --prefix src/agentcore_runtime
       - run: uv run ruff check src
       - run: uv run ruff format --check src
       - run: uv run pytest
-      - run: uv run python src/tests/repository_privacy.py
-      - run: uv build
+      - run: uv run python src/herdr_plugin/tests/repository_privacy.py
+      - run: uv build --all-packages
+      - run: uv run python src/runtime_contract/tests/check_distributions.py --dist dist
       - name: Check production installation
         run: |
           uv sync --frozen --no-dev
           .venv/bin/python -m herdr_agentcore --help
+          .venv/bin/python -c "import importlib.util; assert importlib.util.find_spec('agentcore_runtime') is None"

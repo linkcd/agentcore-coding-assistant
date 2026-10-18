@@ -2,6 +2,18 @@ version = 1
 revision = 3
 requires-python = ">=3.11"
 
+[manifest]
+members = [
+    "agentcore-contract",
+    "herdr-agentcore",
+    "herdr-agentcore-workspace",
+]
+
+[[package]]
+name = "agentcore-contract"
+version = "0.1.0"
+source = { editable = "src/runtime_contract" }
+
 [[package]]
 name = "annotated-types"
 version = "0.8.0"
@@ -101,10 +113,26 @@ wheels = [
 [[package]]
 name = "herdr-agentcore"
 version = "0.1.0"
-source = { editable = "." }
+source = { editable = "src/herdr_plugin" }
 dependencies = [
+    { name = "agentcore-contract" },
     { name = "bedrock-agentcore" },
     { name = "websockets" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "agentcore-contract", editable = "src/runtime_contract" },
+    { name = "bedrock-agentcore", specifier = "==1.24.1" },
+    { name = "websockets", specifier = ">=15.0.1,<16" },
+]
+
+[[package]]
+name = "herdr-agentcore-workspace"
+version = "0.1.0"
+source = { virtual = "." }
+dependencies = [
+    { name = "herdr-agentcore" },
 ]
 
 [package.dev-dependencies]
@@ -115,10 +143,7 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [
-    { name = "bedrock-agentcore", specifier = "==1.24.1" },
-    { name = "websockets", specifier = ">=15.0.1,<16" },
-]
+requires-dist = [{ name = "herdr-agentcore", editable = "src/herdr_plugin" }]
 
 [package.metadata.requires-dev]
 dev = [

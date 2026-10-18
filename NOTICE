@@ -5,5 +5,7 @@ Source revision: abab3d8beb684c79fc827a95a2d015e44e76dbbc
 https://github.com/awslabs/agentcore-samples
 
 Modified Dockerfile, launcher, and HTTP health server are under
-src/herdr_agentcore/runtime_image/. See that directory's NOTICE for provenance.
+src/agentcore_runtime/common/, with assistant adapters under
+src/agentcore_runtime/opencode/image/ and src/agentcore_runtime/codex/image/.
+See each adapter directory's NOTICE for provenance.
 The source is distributed under the Apache License, Version 2.0 (LICENSE).

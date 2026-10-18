@@ -1,73 +1,130 @@
-# Coding agent context and handoff
+# Coding agent instructions
 
 ## Read first
 
-1. `README.md`: the goal of this repository.
-2. `REQUIREMENTS.md`: scope and acceptance criteria.
-3. `DESIGN.md`: architecture, diagrams, and implementation decisions.
+1. Read [README.md](README.md) for the project goal and commands.
+2. Read [requirements](docs/REQUIREMENTS.md) for scope and acceptance criteria.
+3. Read [design](docs/DESIGN.md) for architecture, terminology, and validation evidence.
+4. Read [plugin guideline review](docs/PLUGIN_GUIDELINES_REVIEW.md) for the Herdr contract.
+5. Read [session management proposal](docs/SESSION_MANAGEMENT_PROPOSAL.md) before you change hosting or recovery design.
+6. Read [existing-runtime onboarding](docs/CONNECT_EXISTING_RUNTIME.md) before changing registration or launch behavior.
 
-The goal is a **community Herdr plugin for OpenCode executing inside AgentCore Runtime**, including the runtime image/provisioning source and the connector in this repository. The confirmed hosting target is the execution stack in AWS: **EC2-hosted Herdr server, connectors, and master/coordinator → AgentCore-hosted OpenCode workers**. The laptop is only an access/viewing endpoint; EC2 access method is independent of plugin authentication. Laptop-hosted management remains a development option.
+The project connects Herdr to interactive assistants on AgentCore Runtime.
+It contains three components: AWS CDK infrastructure, the connector, and a small shared contract.
+Read each component's README before changing that component.
+The hosting target is **EC2 management and coordination → AgentCore OpenCode workers**.
+The laptop provides access and viewing. Laptop-hosted management remains a development option.
 
-**Scope clarification:** follow Herdr's design and focus on AgentCore-based orchestration. Jindouyun is only a reference for missing execution concepts. Do not turn this plugin into a Jindouyun client or add Cognito, end-user accounts, per-user Runtime ownership, or a separate control-plane/registry service. S3 Files persistence for coding files, configuration, skills, and OpenCode state is explicitly in scope and is the primary persistence target.
+Follow Herdr's workspace, tab, pane, and live-agent model.
+Use Jindouyun only as a reference for execution concepts.
+Exclude Cognito, end-user accounts, per-user runtime ownership, and a separate customer registry service.
+S3 Files persistence for coding files, configuration, skills, and OpenCode state is in scope. It is not implemented yet.
 
 ## Repository conventions
 
-- Keep the README focused on the goal. Maintain requirements and design in the root files above. Do not recreate a `docs/` tree, publication guides, or a long usage manual unless requested.
-- Put all implementation and test code under `src/`: `src/herdr_agentcore/` and `src/tests/`.
-- Keep `herdr-plugin.toml`, `pyproject.toml`, `uv.lock`, and CI configuration in their standard root/`.github/` locations.
-- Keep the plugin standalone. Use Herdr's public plugin, CLI, and socket interfaces rather than changing Herdr core.
-- Local `herdr/`, `agentcore-samples/`, and `agentcore-sdk-python/` directories, if present, are ignored research checkouts. They are not shipped plugin code. Use them as references; do not build a dependency on their local paths or include them in a distribution.
-- Inspect Git status, diffs, and relevant history before changing files. Commit, push, or publish only when requested.
-- Never commit actual AWS credentials, personal account/resource IDs or ARNs, populated runtime configuration, connection records, or test transcripts. Runtime configuration belongs outside the checkout. Use placeholders or standard fictional account IDs in examples/tests. Before a commit, run the repository privacy guard across working files, index, and history; fix findings without exposing their values.
+- Keep exactly three directories under `src/`: `agentcore_runtime/`, `herdr_plugin/`, and `runtime_contract/`.
+- Keep runtime modules directly in `src/agentcore_runtime/`. Do not add a second folder with the same name.
+- Each component owns its README, implementation, and tests. Infrastructure uses npm/CDK; the connector and contract use Python packaging.
+- Both applications may depend on the contract. Neither may import the other application's implementation.
+- Keep the contract free of AWS, Docker, Herdr, and filesystem operations. Its Python consumer and TypeScript deployment shape use standard libraries only.
+- Keep assistant-specific images, models, health hooks, and deployment behavior in the runtime component.
+- Keep both example adapters under `<assistant>/image/`. Share image build, startup, and health code in `common/`.
+- Keep assistant comparisons and status-detection evidence in `src/agentcore_runtime/README.md`. Do not add READMEs under `opencode/` or `codex/`.
+- Use official AWS CDK constructs and CLI for infrastructure. Do not reintroduce custom Boto3 create/update loops or a runtime provisioning executable.
+- Select runtime settings by named JSON profiles. `opencode` and `codex` are examples, not an enum. Keep profile references distinct from Herdr recognition hints and local connection labels.
+- Keep requirements, design, proposals, and reviews in `docs/`.
+- Keep `README.md`, `AGENTS.md`, and `agent.md` at the root.
+- Keep the manifest, packaging files, and lockfile at the root. Keep CI configuration in `.github/`.
+- Use public Herdr plugin, CLI, and socket interfaces. Do not change Herdr core.
+- Inspect Git status, diffs, and relevant history before changes. Commit, push, or publish only on request.
+- Investigate unfamiliar files before changes. Ask about each file or directory before a cleanup deletion.
+- Preserve `.venv/`. The linked plugin uses its entrypoints.
+- Keep generated environments, build output, and caches ignored by Git.
+- Preserve licenses and attribution, including runtime-image copies.
+- The `herdr/`, `agentcore-samples/`, and `agentcore-sdk-python/` research checkouts were removed. They are not dependencies.
+- Use official versioned documentation or the installed SDK for research. Keep any future reference checkout ignored and outside distributions.
+- Keep user configuration, connection records, and transcripts outside the checkout.
+- Never commit credentials, real account/resource identifiers, populated deployment files, or signed URLs.
+- Use placeholders or standard fictional account IDs in tests and examples.
+- Before a commit, run the privacy guard on working files, the index, and history. Do not print matched values.
 
-## Current implementation
+## Documentation style: ASD-STE100-style English
 
-Experimental version `0.1.0`, targeting Herdr 0.9.5+, Python 3.11+, macOS/Linux. Dependencies are locked with uv; the AgentCore SDK is pinned to 1.24.1.
+Apply these rules to all project documentation, including every component README.
+They are a project style guide, not a claim of formal ASD-STE100 compliance.
+
+1. Use short sentences. Aim for one main idea per sentence.
+2. Prefer active voice. Name the component or person that performs an action.
+3. Use imperative verbs in procedures. Put one main action in each numbered step.
+4. State a condition before its action. For example: “If the original PTY exists, reattach to it.”
+5. Use the same term for the same concept. Keep compute, connection, agent work, and persistent data distinct.
+6. Define unfamiliar abbreviations at first use, or refer to the design glossary.
+7. Use simple, concrete words. Avoid idioms, vague promises, and unnecessary modifiers.
+8. State limits with units. State the scope of a stop, retry, update, or deletion.
+9. Label implemented behavior, local tests, cloud tests, and planned work separately.
+10. Preserve exact commands, API identifiers, paths, requirement IDs, and technical terms.
+11. Preserve useful diagrams and source links. Update relative links when files move.
+12. Do not rewrite licenses, third-party notices, or exact quoted error messages to fit this style.
+
+## Implementation map
+
+Version: `0.1.0`, experimental. Supported hosts: macOS and Linux, Python 3.11+, Herdr 0.9.5+.
+Python dependencies use uv; the CDK project uses npm. AgentCore SDK is pinned to `1.24.1`.
+Example image versions are declared in named settings: OpenCode `1.18.30` and Codex `0.163.0`.
 
 | File | Responsibility |
 | --- | --- |
-| `herdr-plugin.toml` | Five actions and pane entrypoints: setup, new, attach, sessions, stop. |
-| `src/herdr_agentcore/cli.py` | CLI, in-pane menus, workflow coordination, explicit stop confirmation. |
-| `src/herdr_agentcore/provision.py` | CloudFormation infrastructure/runtime templates, local ARM64 image build/ECR push, owned-stack updates, and connector-profile registration. |
-| `src/herdr_agentcore/runtime_image/` | Packaged Docker build context with pinned OpenCode, role-based launcher, HTTP health contract, configuration, and attribution. |
-| `src/herdr_agentcore/herdr.py` | Public Herdr command calls and connection metadata. |
-| `src/herdr_agentcore/storage.py` | Profile/record validation, atomic persistence, local locks. |
-| `src/herdr_agentcore/connector.py` | AWS signing, shell framing, launch-once behavior, reconnect, termination. |
-| `src/herdr_agentcore/runtime_aws.py` | Opt-in post-initialization shim for expiration-aware runtime-role credentials. |
-| `src/herdr_agentcore/terminal.py` | Raw POSIX terminal I/O, resize signals, detach keys, cleanup. |
-| `src/tests/` | Offline behavior tests and optional Herdr manifest validation. |
+| `herdr-plugin.toml` | Declare five actions and pane entrypoints. |
+| `src/herdr_plugin/herdr_agentcore/cli.py` | Parse connection commands, import descriptors, display menus, and confirm stop. |
+| `src/herdr_plugin/herdr_agentcore/models.py` | Extend connection data with host identity selection and version-1 records. |
+| `src/herdr_plugin/herdr_agentcore/storage.py` | Store configuration and records. Sync atomic writes and enforce local locks. |
+| `src/herdr_plugin/herdr_agentcore/sessions.py` | Coordinate create, attach, selection, and stop. |
+| `src/herdr_plugin/herdr_agentcore/agentcore.py` | Resolve credentials, sign WebSockets, call stop, and classify errors. |
+| `src/herdr_plugin/herdr_agentcore/connector.py` | Process shell frames, launch once, reconnect, and handle termination. |
+| `src/herdr_plugin/herdr_agentcore/terminal.py` | Manage raw mode, nonblocking output, input, resize, and detach. |
+| `src/herdr_plugin/herdr_agentcore/herdr.py` | Call public Herdr APIs and publish connection metadata. |
+| `src/runtime_contract/agentcore_contract/` | Validate and serialize versioned connection descriptors without side effects. |
+| `src/agentcore_runtime/app.ts` | Select a named runtime profile and instantiate the CDK stack. |
+| `src/agentcore_runtime/runtime-stack.ts` | Define official CfnRuntime, IAM, DockerImageAsset, and connection outputs. |
+| `src/agentcore_runtime/profiles/` | Declare named settings. New profiles do not require connector branches. |
+| `src/agentcore_runtime/common/` | Share the Dockerfile, launch entrypoint, environment inheritance, HTTP health, lease reader, and license. |
+| `src/agentcore_runtime/codex/image/` | Supply the Codex-specific environment/argv adapter and attribution. |
+| `src/agentcore_runtime/opencode/image/` | Supply the OpenCode adapter, configuration, dependency warmup, and activity-event plugin. |
+| `src/*/tests/` | Hold each component's tests and applicable live probes. |
 
-Use `provision` to build/deploy the included runtime or configure an existing deployment. Provisioning needs local Docker/Buildx plus AWS deployment permissions, creates two owned CloudFormation stacks, and saves a connector profile only after completion. It does not run implicitly when opening a pane. The default remote launcher is `/app/run.sh`; the owned image installs OpenCode inside AgentCore. A cloud Herdr host must have the plugin, dependencies, and runtime profiles installed there; the laptop's plugins/config are not automatically copied to it.
+## Preserve these contracts
 
-New-agent actions launch without a profile picker. Selection precedence is explicit `--profile`, controller-provided `HERDR_AGENTCORE_PROFILE`, then saved `default_profile`. A master agent can use `action new --profile NAME`; the action explicitly forwards the override into the server-owned pane environment. `set-default NAME` changes only the host's default for new connections. The first saved profile becomes default; later saves preserve it. Legacy configs fall back to a literal `default` profile or a single profile, otherwise require explicit selection once. Never silently fall back from an invalid override, and never retarget existing connection snapshots.
+1. **Identity:** use the existing connection UUID as the execution binding. Herdr owns live names and pane organization. Full UUIDs are authoritative.
+2. **Unreleased formats:** no profile version has been publicly released. Internal version fields do not impose backward compatibility. Validate the current format without inferring missing fields.
+3. **Launch:** sync the launch attempt before sending it. Never replay an uncertain command or user input.
+4. **Attach:** require the original PTY after a previous launch. Inspect the shell confirmation's `reconnected` flag. A network failure does not prove process death.
+5. **Detach:** close the WebSocket without a shell-shutdown frame. Detach does not stop compute.
+6. **Stop:** obtain explicit confirmation and the local lock. Stop targets the whole runtime session. The version-1 `stopped` label means AWS accepted the request; no completion waiter exists.
+7. **Errors:** retry classified transient failures within the reconnect window. An explicit `RetryableConflictException` can be retried; an unknown HTTP 409 cannot. Do not display raw AWS responses or signed URLs.
+8. **Terminal:** await nonblocking writes. Backpressure must not block timers, resize, or detach. Restore terminal modes without waiting for output to drain.
+9. **Herdr responses:** structured success has `id` and `result`, not necessarily `ok: true`. Quiet commands can succeed with empty stdout; use their exit status.
+10. **Agent status:** use the explicit `agent_kind`. Clear inherited hints when it is absent or null. Never infer OpenCode from an ARN or command.
+11. **Profile selection:** explicit `--profile` takes precedence over `HERDR_AGENTCORE_PROFILE`, then saved `default_profile`. Forward action overrides through Herdr's public `--env` option.
+12. **Profile defaults:** the first saved profile becomes default. Later saves preserve that choice. Require explicit selection when no default is saved; do not infer it from names or counts.
+13. **Deployment:** use `cdk synth`, `cdk diff`, and `cdk deploy`. CDK owns assets and stack updates. Export connection fields as CloudFormation outputs; never write Herdr profiles from infrastructure code.
+14. **Permission updates:** declare models still needed by surviving sessions through CDK settings. Review IAM changes; CDK does not merge arbitrary existing policies or provide cross-stack transactions.
+15. **Runtime credentials:** the OpenCode adapter uses `AWS_PROFILE=default`; both adapters use native role providers. Do not export credential snapshots. Keep `OPENCODE_DISABLE_AUTOUPDATE=1` in the OpenCode launch and warmup environment.
+16. **External samples:** accept explicit launch commands. Runtime-specific initialization and credential repair belong to the image owner. Do not add such behavior to the generic connector.
+17. **Activity:** track actual work, including concurrent tool calls and known child tasks. Waiting on one tool must not hide other active work. Unknown child activity remains conservatively busy.
+18. **Health leases:** write metadata only. Renew every 10 seconds while busy. Accept only live PID/start-tick matches within 45 seconds. Never add an advancing AWS `time_of_last_update`.
+19. **Compute limits:** the deployed microVM has 900 seconds idle timeout and 28,800 seconds maximum lifetime. Busy reporting does not extend the maximum or preserve files.
+20. **Durability target:** use recorded S3 Files paths for repositories, configuration, skills, and recovery state. Validate mount and SQLite behavior. Keep sockets, PIDs, and live leases ephemeral.
+21. **Shared sessions:** one runtime session per independent agent is the default. Before additional shells, implement separate process/shell stop and whole-session stop. Do not mark ordinary build shells as OpenCode agents.
+22. **Hosting:** run the manager, connectors, and coordinator on EC2 for unattended use. Retain management state separately from worker state. Start with one active manager; local locks do not coordinate multiple hosts.
+23. **Authentication:** EC2 needs IAM/environment setup, not a new plugin protocol. Use `aws_profile: null` and the instance role. Keep human SSO/SSM access and worker execution-role access separate.
+24. **Access:** standard SSM can run the Herdr TUI on EC2 without SSH keys. Native Herdr remote-machine access uses SSH. ECS Exec is not a replacement for that SSH protocol.
+25. **Contract:** use descriptor version 1 and `agentcore-shell-v1`. Export ARN, region, endpoint, command, and optional agent kind. Keep host credentials and execution IDs local to the connector.
+26. **Launch command:** require explicit argv in every contract/connection profile. Named settings supply the example command. CDK context and connector `--command` can override it without installing files or changing container `CMD`.
+27. **Codex example:** use the native Bedrock AWS credential provider. Keep tool approvals enabled. Short cloud model/attachment checks passed, but its health service reports readiness only. Do not claim sandbox/tool or long-duration qualification.
+28. **Status sources:** Herdr supports both example kinds. Current remote status comes from active screen/title manifests through the host wrapper hint. Codex's missing work reporter is an AgentCore-health gap, not a lack of Herdr native detection.
 
-Setup or `configure --runtime-role-credentials` can wrap a PATH-based OpenCode launcher to remove static credentials after initialization and set runtime `AWS_PROFILE=default`. Enable only where that default chain resolves the intended execution role. The management-host `aws_profile` stays independent; saved connection snapshots are unchanged. An absolute OpenCode invocation bypasses the shim. Original argv and wrapped argv must both pass profile validation.
-
-The owned image already sets `AWS_PROFILE=default` and relies on the SDK's execution-role provider/refresh. It never fetches or exports credentials and needs no compatibility shim. Set `OPENCODE_DISABLE_AUTOUPDATE=1` in both the image and launcher to preserve the pinned executable; the updater ignores the additional runtime config's `autoupdate` setting when reading global config. Preserve user configuration, allowlist non-secret PID 1 settings, and forward native OpenCode argv. The current provisioner uses public networking with ephemeral home/state; VPC/S3 Files provisioning and persistent-home integration remain planned. Preserve the adapted sample's NOTICE/LICENSE files in packages and image builds.
-
-The deployed lifecycle settings were read back from AgentCore: **900 seconds idle, 28,800 seconds maximum lifetime**, and no filesystem configurations. Timers apply to each session's compute, not the deployment. The activity bridge is now deployed and cloud-tested for busy, user-question wait, reply, completion, and process death. Old sessions retain their original image; new sessions receive the update. Do not claim that a connected shell prevents idle expiry, that role-credential refresh extends compute lifetime, or that local connection records preserve ephemeral remote files. Persistence and recovery remain required for unattended operation.
-
-Activity reporting lives in `runtime_image/activity-plugin.mjs`, `activity.mjs`, and `activity.py`. OpenCode busy/retry events create per-instance metadata-only leases; idle/error, permission/question waits, and disposal clear them. Only live-process leases renewed within 45 seconds count as `HealthyBusy`; 10-second heartbeats run only while active. PID/start-tick validation rejects exited, suspended, zombie, and reused processes. Never add a continuously changing AWS `time_of_last_update`. An unanswered question after 16 minutes of work should begin the idle window at minute 16 (expiry around minute 31 if no other work); process existence alone is not busy.
-
-## Preserve these decisions
-
-1. **Herdr-native identities with durable execution bindings.** Herdr owns workspace/tab/pane/live-agent identity. Use the existing connection UUID as an internal recovery binding, not a new platform resource. Preserve runtime-session/shell IDs for warm reattachment and record persistent paths/conversation IDs for recovery. One session per independent agent is the default, not a restriction against helper/agent shells sharing a runtime session.
-2. **Never replay uncertain work.** Persist launch state before sending a command. Do not blindly relaunch on reconnect or resend a prompt after ambiguous delivery.
-3. **Detach is not stop.** Closing the WebSocket detaches. Explicit stop terminates the session's compute and processes, not its logical identity or configured persistent data. Do not add shutdown frames to ordinary disconnect cleanup.
-4. **Attach and resume are different.** Inspect the shell confirmation's `reconnected` flag. Keep attach strict and never blindly launch into an existing agent. The planned resume operation may deliberately create a replacement shell/process after confirming remote state and loading the saved conversation. A network failure alone is not proof the process ended.
-5. **Separate compute, transport, and agent state.** Herdr uses `HERDR_AGENT=opencode` and screen detection. Metadata reports transport health; it must not invent agent lifecycle events. A runtime supervisor must report real work to AgentCore rather than treating socket keepalive as a busy signal.
-6. **Keep user state outside installation.** Use Herdr's plugin config/state directories, atomic records, and per-connection locks. Never persist AWS credentials, signed URLs, or raw terminal transcripts.
-7. **Treat CLI responses correctly.** Structured Herdr success responses contain `id` and `result`; do not require an `ok: true` field. Quiet commands such as `pane report-metadata`, `pane send-text`, and `pane send-keys` use exit status and may produce empty stdout.
-8. **Compute lifetime is not persistent-file lifetime.** Stop/expiry can be followed by explicit recovery under the same runtime session ID and recorded S3 Files paths. The current code still treats stopped/expired records as non-attachable; explicit recovery remains to be implemented.
-9. **S3 Files-backed coding state is required but not integrated yet.** Consume the runtime's configured mount, initially `/mnt/s3files`, with a stable persistent-home namespace per independent binding. Persist repositories, working changes, configuration, skills, and OpenCode state; support remote Working Directory selection. Replace the sample launcher's forced ephemeral home/cwd and configuration overwrite. Validate database locking/concurrency and skill discovery; keep sockets/PIDs ephemeral. Managed session storage Preview is only a possible later alternative with different retention semantics.
-10. **One deployment, many sessions and shells.** A runtime profile supplies image/permissions/network/storage settings for multiple sessions. Additional shells may share a runtime session and deliberately share files. Ordinary build/test shells must not be labeled OpenCode agents. Implement separate shell/process stop and whole-session stop scopes before enabling shared-session panes.
-11. **Laptop is a client for unattended operation.** Run Herdr's server, connectors, and any autonomous coordination on an always-on EC2 management host. Standard SSM access can run Herdr's TUI on EC2 without SSH keys; native Herdr remote-machine access remains SSH-based. Laptop sleep/reboot should only disconnect viewing/control, not trigger cloud shutdown. Logic left on the laptop cannot progress while it is offline.
-12. **Two recovery boundaries.** Retain management-host configuration, registry, and workflow progress; reconcile connections after host/server replacement. Separately recover AgentCore compute and OpenCode conversation state. Instance-role credentials belong to the management host; model/tool credentials belong to the runtime execution role. An always-on host does not remove AgentCore lifetime limits.
-13. **EC2 first; ECS/failover later.** EC2 supports a persistent Herdr server with SSM or SSH access. ECS needs compatible remote access, external state, and task-replacement reconciliation; ECS Exec is not assumed to implement Herdr's native SSH transport. Start with one active manager and introduce controller leases before multi-host failover. This is infrastructure coordination, not end-user identity management.
-
-EC2 hosting requires IAM/environment setup, not a plugin authentication rewrite. The existing Boto3/AgentCore SDK path supports instance-profile credentials and SigV4 over WSS. Use connector `aws_profile: null` and a clean service environment with IMDSv2 access. Keep human SSO/SSM access separate from the EC2 role and the AgentCore execution role. No static SSH keys, IAM user keys, or laptop credential forwarding are required for connector authentication. The full-cloud target and access options are recorded in `SESSION_MANAGEMENT_PROPOSAL.md`; EC2/SSM deployment and terminal-path validation remain pending.
-
-When changing shell behavior, inspect the pinned SDK's implementation and tests. Some SDK docstrings differ from implementation: `ShellSession.close()` detaches, and the high-level iterator hides connection-confirmation frames. This connector uses the SDK's signing helper with direct WebSocket framing so it can inspect confirmation.
+The SDK's `ShellSession.close()` detaches. Its high-level iterator hides confirmation frames.
+Inspect the pinned implementation before changing transport behavior.
 
 ## Validation
 
@@ -75,58 +132,105 @@ Run from the repository root:
 
 ```bash
 uv sync --frozen
-uv run ruff check src
-uv run ruff format --check src
-uv run pytest
-uv run python src/tests/repository_privacy.py
-uv build
+uv run --frozen ruff check src
+uv run --frozen ruff format --check src
+HERDR_TEST_BINARY="$(command -v herdr)" uv run --frozen pytest -q --tb=short
+uv run --frozen python src/herdr_plugin/tests/repository_privacy.py
+uv build --all-packages
+npm ci --prefix src/agentcore_runtime
+npm run check --prefix src/agentcore_runtime
+npm test --prefix src/agentcore_runtime
+git diff --check
 ```
 
-Optional validation using an installed Herdr binary:
+The Herdr test uses isolated config, state, and socket paths. It does not start a server or change the user's registry.
+Without `HERDR_TEST_BINARY`, that test is skipped. Default tests make no AWS calls.
+Node activity tests run when Node is installed.
+The privacy guard checks working files, the index, and history without printing matched values.
+
+Build and test a runtime image after runtime changes:
 
 ```bash
-HERDR_TEST_BINARY="$(command -v herdr)" uv run pytest
+docker buildx build --platform linux/arm64 --load \
+  -f src/agentcore_runtime/common/Dockerfile \
+  --build-arg ASSISTANT_DIR=opencode/image --build-arg NPM_PACKAGE=opencode-ai \
+  --build-arg NPM_VERSION=1.18.30 --build-arg EXECUTABLE=opencode \
+  -t herdr-agentcore-local:1.18.30 src/agentcore_runtime
+HERDR_RUNTIME_TEST_IMAGE=herdr-agentcore-local:1.18.30 \
+  uv run --frozen pytest src/agentcore_runtime/tests/test_runtime_image.py -q --tb=short
 ```
 
-That test uses isolated config/state/socket paths and does not start a server or modify the normal user registry. Without the variable it is skipped. Default pytest tests use fake transports, a real local WebSocket server, and a local PTY; they make no AWS calls.
+The Docker tests verify configuration, native startup, real OpenCode activity, and crash cleanup.
+The activity container has no network access and makes no model calls.
+The image build preloads the plugin SDK so the default home works offline.
+Running OpenCode processes need a restart to load a changed plugin.
 
-Opt-in live scripts are `src/tests/live_agentcore_smoke.py` and `src/tests/live_herdr_smoke.py`. Both require `--runtime-arn` and optionally `--aws-profile`; they create and stop their own fresh runtime sessions. The Herdr script also creates an isolated local server and performs small model calls. These scripts are not part of default pytest discovery. Obtain authorization for live runs; never substitute an existing work session for their generated test IDs.
+`cdk synth` creates templates and asset metadata. `cdk deploy` publishes assets and changes AWS resources.
+The manifest build is `uv sync --frozen --no-dev`. It installs the connector and contract, not runtime definitions.
+Use `uv sync --frozen` for all development components. Test isolated installations in temporary environments to preserve the linked plugin.
+Keep the connector version aligned with the manifest. Keep each package's metadata and module version aligned.
+Update the shared lockfile when dependency resolution changes.
 
-The Herdr smoke test accepts `--runtime-role-credentials` to exercise the wrapper and inspect only its own OpenCode process through `InvokeAgentRuntimeCommand`. It returns credential-presence booleans, never values. That optional validation also requires command-invocation permission.
+## Live probes
 
-For the owned image, use `--check-runtime-role` instead: launch `/app/run.sh` directly and verify role settings, absence of static credentials, and absence of the legacy shim. The probe refuses to submit into known OpenCode update screens even if Herdr reports idle.
+Obtain authorization and runtime/profile details before cloud operations.
+Do not deploy resources, stop existing user sessions, or modify the user's Herdr setup as an incidental test.
+Use disposable test sessions and explicit targets. Do not reuse a user's session as a probe.
 
-Build the owned image locally with `docker buildx build --platform linux/arm64 --load -t herdr-agentcore-local:1.18.30 src/herdr_agentcore/runtime_image`. Set `HERDR_RUNTIME_TEST_IMAGE=herdr-agentcore-local:1.18.30` for pytest's opt-in Docker configuration and Buildx-discovery checks. Those tests use no AWS/model requests. `provision --plan` is offline; omitting `--plan` creates cloud resources and pushes the image.
+| Script or option | Purpose |
+| --- | --- |
+| `src/herdr_plugin/tests/live_agentcore_smoke.py` | Check shell I/O, resize, and same-session attachment. |
+| `src/herdr_plugin/tests/live_herdr_smoke.py` | Use an isolated Herdr server for new/model/attach/follow-up/stop tests. |
+| `--connection-file` | Supply a validated descriptor to the Herdr probe. Its ARN must match the explicit test target. |
+| `--check-runtime-role` | Check the owned launcher without the shim. |
+| `src/agentcore_runtime/tests/live_runtime_activity.py --model-turn` | Check deployed health during work and a controlled question/reply. |
+| `src/herdr_plugin/tests/live_layout_probe.py` | Probe startup at selected dimensions in a fresh session. |
 
-The same image flag also runs `runtime_activity_smoke.py` inside an isolated container, using real OpenCode shell events to verify busy/idle transitions and crash cleanup. Node-based event tests run when `node` is installed; all activity/lease tests are offline. The Dockerfile prewarms OpenCode's plugin SDK dependencies so the default-home runtime can load the bundled hook without npm access. After changing the plugin/config, rebuild the image; existing OpenCode processes require restart to load it.
+Supply `--runtime-arn`; use `--aws-profile` if needed.
+Process checks require command-invocation permission and return credential-presence booleans only.
+Live probes must stop their own sessions. The Herdr probe must also stop its isolated server.
+Reject known update dialogs before sending model prompts. Wait for detached panes to close before targeting a later action.
 
-`live_runtime_activity.py --runtime-arn "$RUNTIME_ARN" --model-turn` validates the deployed activity bridge in a fresh disposable cloud session. It requires command-invocation/stop access; the model-turn option makes a Bedrock call and answers only its own controlled Continue/Stop question. It uses the existing health server, never kills that process, and stops only its generated runtime session in cleanup. It does not test the full 15-minute timeout.
+## Current evidence and next work
 
-The manifest's production build is `uv sync --frozen --no-dev`. After testing that command, use `uv sync --frozen` to restore test dependencies. Keep version numbers aligned in the manifest, package metadata, and `__init__.py`; regenerate the lockfile when dependency/project resolution changes.
+- The shared-image refactor unifies the example directory layout, Dockerfile, startup, environment handling, and health service. CDK staging isolates each selected adapter.
+- Both refactored ARM64 images built successfully. The current change passed 180 Python tests with those images, six CDK tests, and TypeScript checks.
+- Herdr 0.9.5 native support for both examples was confirmed from the installed CLI, official integration documentation, and pinned manifests. The runtime README records the exact detection basis and limitations.
+- Synthetic Codex screens passed installed-Herdr `agent explain` checks for working and blocked states. This is not Codex cloud or full-UI qualification.
+- Both shared images passed cloud model/role/default-selection/attachment/conversation/stop E2E probes on disposable runtimes. OpenCode also passed deployed work/question/reply and process-death health checks.
+- Test compute was in `eu-west-1`; Codex retained its declared Mantle inference region `us-east-2`. The primary prompts performed no tool use or file changes.
+- Codex startup reported missing system bubblewrap with a bundled fallback, and embedded mode due to CLI configuration overrides. Model flow passed; sandbox/tool behavior and full key handling remain unverified.
+- All test-session stop requests and isolated-server cleanup completed. Both temporary stacks/runtimes were confirmed absent. One CloudFormation deletion stabilization timeout required a read-verified retry.
+- The existing default deployment stayed READY. Disposable tests were not promoted into its profile.
+- The CDK/profile implementation passed 174 Python tests with both image-test flags enabled, five CDK assertion tests, and synthesis for both named examples. Deprecated custom-provisioner tests were removed with that code.
+- Runtime tests passed with local ARM64 images, including real OpenCode health transitions and Codex CLI startup without network access.
+- The connector and Python contract build independent distributions. Infrastructure is a CDK project and has no Python wheel or console entrypoint.
+- Documentation checks passed for 11 project Markdown files, 57 local links, and all 56 requirement IDs. Ruff, lockfile, package, and privacy checks passed.
+- The old custom-provisioned runtime and its two owned stacks were deleted. Six saved connections were already expired; their records now show retirement. Old ECR images remain retained.
+- The named `opencode` settings were deployed through official CDK. The runtime and DEFAULT endpoint reached READY. The plugin was reinstalled/relinked and imported the new CDK outputs.
+- Fresh cloud probes passed model/role checks, question wait/reply health, process-death cleanup, default selection, attachment, and conversation continuity. Both test-session stop requests succeeded and the isolated Herdr server stopped.
+- The named `codex` settings passed synthesis, local ARM64 startup, and the later short cloud model/attachment probe. No activity-aware health or long-duration validation is claimed.
+- A final CDK diff against the deployed OpenCode stack reported no differences. The Herdr production environment excludes the removed runtime CLI.
+- The earlier refactor passed 170 offline Python tests, including isolated Herdr validation. Ruff and the privacy guard passed.
+- All nine runtime-image tests passed against the full ARM64 image built and pushed by the provisioner. This includes the three opt-in Docker tests.
+- Earlier direct builds timed out during public-base metadata resolution. The full provisioner build later succeeded with its temporary Docker configuration.
+- The earlier revision was deployed to the existing owned runtime. The runtime and default endpoint reached READY on the new version.
+- Fresh cloud probes passed shell/model activity, question wait/reply/completion, process-death cleanup, role-only model calls, default-profile selection, attachment, and context-aware follow-up.
+- Both probe sessions and the isolated Herdr server were stopped. Concurrent/nested-tool permission cases retain offline coverage; live coverage remains pending.
+- The saved runtime profile was renamed to `opencode-agentcore-runtime` and remains the default. Existing connection snapshots retain their original target.
+- Earlier cloud tests verified owned-runtime creation/update, role-based Bedrock calls, default-profile selection, same-session attachment, and context-aware follow-up.
+- Earlier activity tests verified shell work, model generation, question wait/reply, completion, and process death. Full idle/max-lifetime expiry, live permission dialogs, and full credential rollover remain untested.
+- Five independent agents completed parallel retrieval/translation and follow-up work. They were stopped on request. Discover current sessions before any operation.
+- OpenCode 1.18.30/Bun 1.3.14 crashed at 35×20 before mouse input. Startup and SGR wheel controls passed at 80×20 and 35×40. The safe-size boundary is unknown.
+- A separate suspended process was recovered with identity-checked `SIGCONT`. Distinguish suspension from process exit and stopped AgentCore compute.
+- Manual conversation recovery succeeded after a credential snapshot expired, while compute and its database survived. Automated resume and durable compute recovery remain unimplemented.
+- EC2/SSM hosting, laptop-disconnect independence, host reconciliation, S3 Files coding-state persistence, and additional shells remain planned.
+- Linux/macOS Python 3.11/3.13 CI is configured. Remote CI, GitHub-managed install/update, and publication remain pending.
 
-## Validation status and next work
+The next hosting milestone is H01–H10 in the requirements, using the existing authentication path.
+Worker persistence is a separate milestone: P01–P07, then L01–L12 recovery and scoped operations.
+Capture conversation identity, validate checkpoints, and reconcile uncertain tool outcomes before automatic resume.
+Stop completion and bounded provisioning/stop conflict handling still need implementation.
 
-- Offline tests, lint/format checks, package builds, and isolated Herdr 0.9.5 manifest validation have passed on macOS/Python 3.13. Re-run relevant checks after changes.
-- Automatic profile selection passed an isolated live Herdr test with two profiles and no runtime-picker input, followed by model/role/reattach/follow-up/stop checks. The user's default was set to the owned image's saved profile outside the repository. The probe waits for detached panes to close before targeting the next action. Explicit controller precedence and legacy configuration handling have offline coverage.
-- The activity bridge passed local ARM64 image tests and was deployed successfully. A fresh AWS activity probe confirmed shell work, real Bedrock generation, a question wait reporting idle, reply/resumed generation reporting busy, completion, and process-death cleanup through the deployed health endpoint. A separate Herdr model/role/reattach/follow-up test also passed. Both disposable sessions and the isolated test server were stopped. Full-duration idle/max-lifetime expiry, live permission dialogs, and credential rotation remain untested. Untracked detached jobs and disabled external plugins are not covered by its activity reports.
-- The repository-owned image was deployed successfully, including ECR/IAM/runtime creation, profile registration, and a subsequent image update. The first test exposed a startup updater dialog; its disposable session was stopped, and explicit updater suppression fixed the launch. A fresh test then passed role-based Bedrock inference, process inspection without static credentials or the legacy shim, same-session detach/reattach, context-aware follow-up, and test-session cleanup. The isolated test server was stopped. Both CloudFormation templates passed `cfn-lint`; local image/bootstrap/provisioning tests also passed. Full credential rotation remains pending. Discover the externally saved profile for current identifiers; never embed them here.
-- Live validation on 2026-10-16 passed against an externally configured runtime, with Herdr 0.9.5 and OpenCode 1.18.30: shell input/output and resize, same-PID/environment reattachment, plugin new/attach/stop, a Bedrock model turn through `agent prompt --wait`, and a follow-up turn retaining context after reattachment. All disposable test runtime sessions and isolated Herdr servers were stopped; the original Herdr server remained running. Keep actual deployment identifiers out of repository records.
-- Live tests found that Herdr's quiet commands return empty stdout and AgentCore replays buffered output on attachment. Respect quiet-command exit status and avoid mistaking replayed output for new probe results. See DESIGN.md for the validation details.
-- Five independent sessions were started and recognized in one tab. Small tiled panes exposed an OpenCode 1.18.30/Bun 1.3.14 native crash: 35×20 failed before any mouse input; 80×20 and 35×40 passed startup plus SGR wheel controls. The exact source-level bug and safe-size boundary remain unknown. Five recovered agents subsequently completed parallel news-retrieval/translation tasks and follow-up corrections, then were stopped on request. Discover current sessions before operating; later user-opened sessions are not disposable probes.
-- A live wrapper plus `cloud=connected` and an idle badge can outlast a remote TUI crash. Literal mouse/focus escape sequences may then echo. Verify visible application output, and avoid history reads that inject scrolling into a failed application. The opt-in `src/tests/live_layout_probe.py` reproduces viewport behavior in fresh disposable sessions.
-- Literal key echo can also indicate suspension, not a crash. Cloud-5 was observed with remote OpenCode in `T (stopped)` state; identity-checked `SIGCONT` restored the same process/chat. The `exec` launcher leaves no parent shell for `fg`. Distinguish Unix process suspension, agent idle, and stopped AgentCore compute before choosing a recovery action.
-- A later Bedrock token-expiry incident came from `/app/run.sh` exporting temporary IMDS credentials once. Host STS access and the shell still worked while OpenCode retained an expired snapshot. An expiration-aware Node provider and model call were verified after removing the snapshot and setting runtime `AWS_PROFILE=default`.
-- The affected conversation was manually resumed in the same surviving runtime using a database backup, identity-checked process replacement, a new shell, and the saved OpenCode `--session` value. A follow-up model turn succeeded. The user subsequently requested stopping that old session and opening a fresh session on the owned image; both operations completed and the new agent was ready. Discover current state before operating. The earlier recovery is evidence for process recovery, not an implemented resume action or durable compute recovery.
-- The opt-in wrapper passed a separate fresh-session Herdr test: original launcher initialization, model turn, OpenCode environment without static credential variables, detach/reattach, context-aware follow-up, and test cleanup. The externally configured user profile was updated for future launches. Full credential-lifetime rollover remains untested; profile changes do not repair previously launched processes.
-- Basic concurrent prompting and result collection are verified. Durable workflow recovery, approval dialogs, forced network outages, small-viewport protection, the full pane resize/layout matrix, long-idle/max-lifetime behavior, and persistent coding-state recovery remain unverified or unresolved.
-- No EC2/ECS management deployment, laptop sleep/reboot validation, or automatic management-host recovery has been implemented or verified.
-- The Linux/macOS Python 3.11/3.13 CI matrix is configured; remote CI execution and GitHub-managed install/update validation remain pending.
-- Publication and marketplace listing have not occurred. A public repository with a valid manifest and the `herdr-plugin` topic is the community distribution route; official endorsement is separate.
-
-The next hosting milestone is the EC2 management model (H01–H10), using the existing authentication path. Worker durability remains a separate priority: persistent coding-file requirements (P01–P07) and multi-agent/lifecycle acceptance cases. Extend binding records with persistent home/cwd, integrate S3 Files and runtime bootstrap/process supervision, and capture OpenCode conversation state. Implement the lifecycle increment (L01–L12): resume, Herdr rebinding, host reconciliation, additional shells, and scoped stop operations. Handle stop completion and retryable provisioning/stop conflicts; the current connector treats non-429 HTTP 4xx responses as terminal. Recovery must not duplicate a launch, tool request, or coordination step.
-
-The current prototype has no S3 Files-backed home/cwd integration, persisted OpenCode conversation ID, additional-shell workflow, recovery supervisor, explicit resume/archive action, or management-host deployment/reconciliation. These are design targets, not verified capabilities. The copied sample's S3 Files mount for shared tools does not establish coding-state persistence. Keep direct AWS IAM authentication; do not add Jindouyun authentication/control-plane dependencies while implementing these gaps.
-
-Before cloud tests, obtain the runtime/profile details and authorization to perform the intended operations. Do not deploy resources, stop existing sessions, alter the user's live Herdr setup, or publish a repository as an incidental test. Use disposable named Herdr sessions for interactive testing.
-
-For handoff, state what changed, which checks actually ran, and what remains unverified. Update these instructions and the requirements/design when implementation decisions change, without adding separate handoff documents.
+For handoff, state changed behavior, checks that ran, and unresolved limits.
+Update this file and the design/requirements when decisions change. Do not add a separate handoff document.

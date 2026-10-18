@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "herdr-agentcore"
+version = "0.1.0"
+description = "Herdr terminal connector for provisioned AgentCore runtimes"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+dependencies = ["agentcore-contract==0.1.0", "bedrock-agentcore==1.24.1", "websockets>=15.0.1,<16"]
+
+[project.scripts]
+herdr-agentcore = "herdr_agentcore.cli:main"
+
+[tool.uv.sources]
+agentcore-contract = { workspace = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["herdr_agentcore"]
+
+[tool.hatch.build.targets.sdist]
+include = ["herdr_agentcore/", "tests/", "README.md", "pyproject.toml", "LICENSE"]

@@ -1,0 +1,19 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agentcore-contract"
+version = "0.1.0"
+description = "Versioned connection contract for AgentCore terminal runtimes"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+dependencies = []
+
+[tool.hatch.build.targets.wheel]
+packages = ["agentcore_contract"]
+
+[tool.hatch.build.targets.sdist]
+include = ["agentcore_contract/", "connection.ts", "tests/", "README.md", "pyproject.toml", "LICENSE"]

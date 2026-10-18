@@ -2,19 +2,31 @@
 /herdr/
 /agentcore-samples/
 /agentcore-sdk-python/
+
+# Generated Python environment and packaging output.
 .venv/
+build/
+dist/
+*.egg-info/
+
+# Generated test/lint caches and Python bytecode (at any directory depth).
 __pycache__/
 *.py[cod]
 .pytest_cache/
 .ruff_cache/
-dist/
-*.egg-info/
 .coverage
 .DS_Store
+
 # Runtime configuration and credentials belong outside this repository.
 .env
 .env.*
 runtime_config*.json
+*.connection.json
+*.connection.json.lock
+node_modules/
+cdk.out/
+cdk.context.json
+cdk-outputs*.json
 agent.config
 infra.config
 .deployed-state.json

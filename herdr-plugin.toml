@@ -2,7 +2,7 @@ id = "agentcore"
 name = "AgentCore"
 version = "0.1.0"
 min_herdr_version = "0.9.5"
-description = "Run and interact with cloud-hosted OpenCode agents through Amazon Bedrock AgentCore Runtime."
+description = "Connect Herdr terminals and supported assistants to provisioned AgentCore runtimes."
 platforms = ["linux", "macos"]
 
 [[build]]
