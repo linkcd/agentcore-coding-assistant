@@ -17,12 +17,12 @@ It does not convert an HTTP-only agent into a terminal application.
   "version": 1,
   "transport": "agentcore-shell-v1",
   "connection": {
-    "runtime_arn": "arn:aws:bedrock-agentcore:us-west-2:123456789012:runtime/example-Abc123",
-    "region": "us-west-2",
+    "runtime_arn": "arn:aws:bedrock-agentcore:eu-west-1:123456789012:runtime/example-Abc123",
+    "region": "eu-west-1",
     "endpoint": "DEFAULT",
     "command": ["/app/run.sh"],
     "agent_kind": "opencode",
-    "runtime_profile": "opencode"
+    "runtime_profile": "opencode-agentcore-profile-2"
   }
 }
 ```
@@ -38,7 +38,7 @@ The example account and runtime are fictional.
 | `endpoint` | Runtime endpoint qualifier. Default: `DEFAULT`. |
 | `command` | Required remote launch argument array. There is no default. It must start an installed interactive program. |
 | `agent_kind` | Herdr recognition hint. Use a supported lowercase identifier, or `null` for an ordinary terminal. Default: `null`. |
-| `runtime_profile` | Optional named settings reference. For example, `opencode` points to a supplied settings file. It is not a connector enum or a command lookup. |
+| `runtime_profile` | Optional provision profile reference, such as `opencode-agentcore-profile-2`. It is not a connector enum or a command lookup. |
 
 The consumer validates version, transport, ARN, region, argument limits, and recognition-hint syntax.
 Unknown fields are rejected. Commands allow 1–64 arguments and at most 8 KiB in total.
@@ -48,7 +48,9 @@ The descriptor contains no credentials, host AWS profile, model settings, or ses
 The connector selects host credentials locally and creates execution IDs.
 Model configuration, skills, permissions, and health reporting belong to the runtime definition.
 Profile names and recognition hints are distinct. A profile called `reviewer` can use the same Herdr hint as another profile.
-Adding a profile such as `codex` does not require a new branch in the connector or contract.
+Adding a provision profile does not require a new branch in the connector or contract.
+The current examples export `codex-agentcore-profile-1`, `opencode-agentcore-profile-2`, and `opencode-s3filesystem-agentcore-profile-3` as their references.
+The two OpenCode descriptors have the same command and recognition hint, but different deployed runtime ARNs and profile references.
 
 ## Python API
 
@@ -72,6 +74,8 @@ Multiple stacks require explicit selection. Unrelated outputs are not copied int
 ## Format status and ownership
 
 Descriptor version and plugin storage version are separate contracts.
+AWS runtime versions and assistant package versions are separate from both formats.
+For example, the latest verified Codex runtime is version 4, but its connection descriptor still uses version 1.
 These formats are not publicly released. Internal version `1` is a validation marker, not a backward-compatibility promise.
 Runtime definitions supply explicit commands. The contract does not assume `/app/run.sh`, OpenCode, or any other launcher.
 Descriptors and profiles without `agent_kind` select an ordinary terminal, including when their command contains `opencode`.
@@ -91,6 +95,7 @@ uv build --package agentcore-contract
 
 Unit tests check validation and round trips. Repository tests enforce the three component boundaries.
 The package can build independently. It does not require either application package.
+All three current CDK output descriptors were imported successfully during the 2026-10-19 [all-profile verification](../agentcore_runtime/README.md#all-profiles-and-six-interactive-sessions--2026-10-19).
 
 Repository links: [runtime publisher](../agentcore_runtime/README.md), [connector](../herdr_plugin/README.md), and [writing rules](../../agent.md#documentation-style-asd-ste100-style-english).
 These relative links refer to a full repository checkout.

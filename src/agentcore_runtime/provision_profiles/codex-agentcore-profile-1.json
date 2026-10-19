@@ -1,0 +1,14 @@
+{
+  "stackName": "HerdrCodexRuntime",
+  "runtimeName": "codex_agentcore_runtime_1",
+  "region": "eu-west-1",
+  "image": "codex",
+  "inference": {
+    "bedrock-endpoint-type": "runtime",
+    "modelId": "global.openai.gpt-5.6-sol"
+  },
+  "lifecycle": {
+    "idleRuntimeSessionTimeout": 900,
+    "maxLifetime": 28800
+  }
+}

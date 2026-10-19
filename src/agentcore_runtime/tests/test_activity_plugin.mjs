@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import test from "node:test";
-import { ActivityTracker, createReporter } from "../opencode/image/activity.mjs";
+import { ActivityTracker, createReporter } from "../agent_images/opencode/activity.mjs";
 
 const status = (sessionID, type) => ({ type: "session.status", properties: { sessionID, status: { type } } });
 const event = (type, sessionID, extra = {}) => ({ type, properties: { sessionID, ...extra } });

@@ -17,7 +17,7 @@ Obtain these details from the runtime owner:
 | Endpoint | Use `DEFAULT` unless the owner supplies another qualifier. |
 | Shell access | The deployment must accept AgentCore Shell connections from the management identity. |
 | Launch command | Obtain the exact executable and arguments for the installed interactive assistant. |
-| Runtime profile reference | Obtain the named settings reference, if available. `opencode` and `codex` are example profile names, not connector enums. |
+| Runtime profile reference | Obtain the provision profile reference, if available, such as `opencode-agentcore-profile-2`. It is not a connector enum. |
 | Herdr recognition hint | Read `agent_kind` from those settings. This hint identifies a Herdr-supported interface; it is separate from the profile name. |
 | Worker access | The runtime must already have model/tool credentials, dependencies, and required network access. |
 
@@ -26,8 +26,10 @@ It also needs `StopRuntimeSession` permission if you use the stop action.
 Use your normal AWS credential chain or an explicitly selected host AWS profile.
 The runtime execution role supplies worker model/tool access; it is a separate identity.
 
-A runtime profile points to image, command, model, and environment settings.
-The repository supplies `opencode` as one example and `codex` as another. You can add other named profiles.
+A provision profile points to image, command, model, and environment settings.
+The repository supplies `codex-agentcore-profile-1`, `opencode-agentcore-profile-2`, and `opencode-s3filesystem-agentcore-profile-3`. You can add other named profiles.
+All three use Bedrock Runtime in `eu-west-1`. Codex selects GPT-5.6 Sol; both OpenCode profiles select Kimi K3.
+The filesystem profile starts at `/mnt/workspace`. The PUBLIC profiles start at `/home/agent`.
 The Herdr connection profile created below is a local ARN binding, not the runtime settings file.
 The connector uses resolved fields from the owner or deployment outputs; it does not guess them from a profile name.
 
@@ -91,7 +93,7 @@ Do not copy worker credentials into Herdr configuration.
 Use **method A** if the owner gives you an ARN and launch command.
 Use **method B** if the owner gives you a connection descriptor.
 Use **method C** for this repository's standard CDK deployment outputs.
-Both methods store the same explicit connection fields. Registration makes no AWS calls and starts no remote process.
+All three methods store the same explicit connection fields. Registration makes no AWS calls and starts no remote process.
 
 ### Method A: register the ARN and command
 
@@ -107,7 +109,7 @@ For an OpenCode runtime that provides `/app/run.sh`, register it explicitly:
 .venv/bin/herdr-agentcore configure \
   --runtime-arn "$RUNTIME_ARN" \
   --endpoint DEFAULT \
-  --runtime-profile opencode \
+  --runtime-profile opencode-agentcore-profile-2 \
   --agent-kind opencode \
   --profile "$CONNECTION_NAME" \
   --config-dir "$HERDR_CONFIG_DIR" \
@@ -127,7 +129,7 @@ For example, an existing custom launcher can receive separate arguments:
 ```
 
 `--command` consumes all remaining arguments. Put it last.
-Here, `--runtime-profile opencode` records the example settings reference.
+Here, `--runtime-profile opencode-agentcore-profile-2` records the example provision profile reference.
 `--agent-kind opencode` is the recognition hint specified by that profile, not a special connector value.
 Omitting the kind, or using `terminal`, selects an ordinary terminal without an agent-recognition hint.
 Herdr must already support a kind before its agent APIs can use that hint.
@@ -142,11 +144,12 @@ Use the private file supplied by the runtime owner:
 
 ```bash
 .venv/bin/herdr-agentcore configure \
-  --connection-file "$HOME/.config/agentcore/opencode.connection.json" \
+  --connection-file .local/deployments/owner-provided.connection.json \
   --profile "$CONNECTION_NAME" \
   --config-dir "$HERDR_CONFIG_DIR"
 ```
 
+Set that path to the standalone descriptor supplied by the runtime owner. CDK does not generate this file; use method C for CDK outputs.
 The descriptor must include an explicit `command`. It can also specify the endpoint and agent kind.
 Its region must match the ARN. It must not contain host credentials or a host AWS profile.
 See the [connection contract](../src/runtime_contract/README.md) for the complete format.
@@ -164,16 +167,24 @@ The deployment owner runs `cdk deploy --outputs-file PATH`. The standard output 
 
 ```bash
 .venv/bin/herdr-agentcore configure \
-  --cdk-outputs "$HOME/.config/agentcore/cdk-outputs-opencode.json" \
+  --cdk-outputs .local/deployments/opencode-agentcore-profile-2.json \
   --stack HerdrOpenCodeRuntime \
   --profile "$CONNECTION_NAME" \
   --config-dir "$HERDR_CONFIG_DIR"
 ```
 
-Select the actual stack name from the deployment. Use the Codex output file and stack name for that example profile.
+Select the file and stack for the intended current deployment:
+
+| Provision profile | File under `.local/deployments/` | Stack |
+| --- | --- | --- |
+| `codex-agentcore-profile-1` | `codex-agentcore-profile-1.json` | `HerdrCodexRuntime` |
+| `opencode-agentcore-profile-2` | `opencode-agentcore-profile-2.json` | `HerdrOpenCodeRuntime` |
+| `opencode-s3filesystem-agentcore-profile-3` | `opencode-s3filesystem-agentcore-profile-3.json` | `HerdrOpenCodeS3FilesystemRuntime` |
+
+You can use the provision profile name as `CONNECTION_NAME`, or choose another local label.
 If an output file contains multiple stacks, `--stack` is required. The connector does not choose one arbitrarily.
 The imported runtime-profile reference is descriptive metadata. Command and recognition fields are already resolved in the descriptor.
-See the [runtime deployment steps](../src/agentcore_runtime/README.md) for both example profiles.
+See the [runtime deployment steps](../src/agentcore_runtime/README.md) for all three profiles.
 
 ## Step 5: check the saved configuration
 
@@ -183,7 +194,8 @@ See the [runtime deployment steps](../src/agentcore_runtime/README.md) for both 
 
 Check the ARN, region, endpoint, full command array, and agent kind.
 This command reads local configuration. It is not a remote readiness check.
-Keep populated configuration and its output outside the repository.
+Retired output files and older saved connection profiles can still contain obsolete ARNs. Compare the selected profile with the current stack's outputs.
+Keep populated deployment outputs under ignored `.local/deployments/`. Herdr manages its saved connection configuration and state.
 
 ## Step 6: open a new assistant session
 
@@ -216,6 +228,7 @@ herdr plugin action invoke agentcore.new
 
 An explicit profile override has priority over the saved default.
 The first profile saved into an empty configuration becomes default. Later saves preserve that choice.
+Importing the numbered profiles does not update an older saved default. Select the current profile explicitly before launching it.
 If configuration has no saved default, select one explicitly. The connector does not infer it from a name or profile count.
 
 ## Step 8: verify detach and attachment
@@ -249,6 +262,16 @@ The local `stopped` label means the API accepted the request; there is no stop-c
 
 ## Does the runtime need changes?
 
+### Verified current examples — 2026-10-19
+
+All three numbered deployments and their `DEFAULT` endpoints were READY. Codex was runtime version 4; both OpenCode deployments were version 1.
+Two independent sessions per profile opened in three Herdr tabs. All six executed a date command and reported directory access.
+The filesystem sessions used the shared `/mnt/workspace` mount; the PUBLIC sessions used runtime-local home directories.
+Those six user-requested sessions were left open. The separate disposable verification probes stopped their own sessions.
+See [all-profile verification](../src/agentcore_runtime/README.md#all-profiles-and-six-interactive-sessions--2026-10-19) for storage checks and remaining limits.
+
+### Adaptation cases
+
 | Existing runtime | Required adaptation |
 | --- | --- |
 | Installed interactive assistant and usable Shell access | Usually configuration only. Supply the actual launch command. |
@@ -261,7 +284,7 @@ The local `stopped` label means the API accepted the request; there is no stop-c
 `/app/run.sh` comes from the AWS OpenCode sample and is also supplied by this project's OpenCode definition.
 It is not an AgentCore or Herdr requirement. In our images, it starts the shared launcher, then the selected image's assistant adapter.
 The container's default process is the health service, not this assistant launcher.
-See the [sample attribution](../src/agentcore_runtime/opencode/image/NOTICE).
+See the [sample attribution](../src/agentcore_runtime/agent_images/opencode/NOTICE).
 
 For a sample launcher that exports a static credential snapshot, ask its owner to supply a refreshable startup path or a reviewed wrapper command.
 The connector does not implement that runtime-specific repair. Reattachment cannot change an already-running process's environment.
@@ -276,7 +299,7 @@ The supplied OpenCode and Codex example images use native AWS credential provide
 | Access denied | Check Shell permission for the selected runtime and endpoint. STS success alone is insufficient. |
 | Command not found | Confirm the path inside the runtime. Registration cannot create it. |
 | Assistant opens but Herdr shows a normal terminal | Check the explicit `agent_kind` and Herdr support for it. The connector does not infer a kind. |
-| Model call fails but the terminal works | Inspect the worker's model configuration, role, credentials, and network access. Host and worker identities are separate. |
+| Model call fails but the terminal works | Inspect the worker's model/endpoint selection, role, credentials, network access, and account retention eligibility. Host and worker identities are separate. |
 | Original PTY missing | The saved shell ended or compute expired. Do not expect attachment to restore ephemeral files or conversation state. |
 | Very small OpenCode pane crashes | Use a larger or zoomed pane. The tested OpenCode version has a known small-viewport failure. |
 

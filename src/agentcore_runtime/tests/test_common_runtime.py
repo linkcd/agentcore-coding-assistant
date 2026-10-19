@@ -8,9 +8,9 @@ from unittest.mock import Mock
 
 import pytest
 
-from agentcore_runtime.codex.image import assistant as codex
-from agentcore_runtime.common import runtime
-from agentcore_runtime.opencode.image import assistant as opencode
+from agentcore_runtime.agent_images.codex import assistant as codex
+from agentcore_runtime.agent_images.common import runtime
+from agentcore_runtime.agent_images.opencode import assistant as opencode
 
 
 def test_only_allowed_settings_cross_the_pid1_boundary():
@@ -26,10 +26,11 @@ def test_shared_launch_preserves_arguments_cwd_and_configuration(monkeypatch, tm
     project = tmp_path / "project"
     project.mkdir()
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv(adapter.WORKDIR_SETTING, str(project))
+    monkeypatch.setenv("AGENTCORE_WORKDIR", str(project))
     monkeypatch.setenv("AWS_REGION", "us-west-2")
     monkeypatch.setenv("BEDROCK_MODEL_ID", "example.model")
     monkeypatch.setenv("BEDROCK_INFERENCE_REGION", "us-east-2")
+    monkeypatch.setenv("BEDROCK_ENDPOINT_TYPE", "runtime")
     arguments = ["--session", "a b;literal"]
     monkeypatch.setattr(sys, "argv", ["launch.py", *arguments])
     monkeypatch.setattr(Path, "read_bytes", Mock(side_effect=PermissionError))
@@ -52,6 +53,59 @@ def test_invalid_environment_never_executes_a_program(monkeypatch):
     with pytest.raises(SystemExit):
         runtime.launch(opencode)
     execute.assert_not_called()
+
+
+@pytest.mark.parametrize("adapter", [opencode, codex])
+@pytest.mark.parametrize(
+    "endpoint_type", [None, "Bedrock Runtime", "Bedrock Mantle", "Runtime", "runtime "]
+)
+def test_missing_or_invalid_endpoint_type_never_launches(monkeypatch, adapter, endpoint_type):
+    monkeypatch.setenv("AWS_REGION", "eu-west-1")
+    monkeypatch.setenv("BEDROCK_INFERENCE_REGION", "eu-west-1")
+    monkeypatch.setenv("BEDROCK_MODEL_ID", "example.model")
+    monkeypatch.delenv("BEDROCK_ENDPOINT_TYPE", raising=False)
+    if endpoint_type is not None:
+        monkeypatch.setenv("BEDROCK_ENDPOINT_TYPE", endpoint_type)
+    monkeypatch.setattr(Path, "read_bytes", lambda _: b"")
+    execute = Mock()
+    monkeypatch.setattr(runtime.os, "execvpe", execute)
+    with pytest.raises(SystemExit):
+        runtime.launch(adapter)
+    execute.assert_not_called()
+
+
+@pytest.mark.parametrize("adapter", [opencode, codex])
+def test_shell_endpoint_choice_takes_precedence_over_pid1(adapter):
+    env = adapter.launch_environment(
+        {
+            "AWS_REGION": "eu-west-1",
+            "BEDROCK_INFERENCE_REGION": "eu-west-1",
+            "BEDROCK_MODEL_ID": "example.model",
+            "BEDROCK_ENDPOINT_TYPE": "runtime",
+        },
+        b"BEDROCK_ENDPOINT_TYPE=mantle\0",
+    )
+    assert env["BEDROCK_ENDPOINT_TYPE"] == "runtime"
+
+
+@pytest.mark.parametrize("mounted", [True, False])
+def test_configured_mount_must_be_ready_before_launch(monkeypatch, mounted):
+    monkeypatch.setenv("AWS_REGION", "eu-west-1")
+    monkeypatch.setenv("BEDROCK_MODEL_ID", "example.model")
+    monkeypatch.setenv("BEDROCK_ENDPOINT_TYPE", "runtime")
+    monkeypatch.delenv("AGENTCORE_REQUIRED_MOUNT", raising=False)
+    monkeypatch.setattr(Path, "read_bytes", lambda _: b"AGENTCORE_REQUIRED_MOUNT=/mnt/workspace\0")
+    monkeypatch.setattr(Path, "is_mount", lambda path: mounted and str(path) == "/mnt/workspace")
+    monkeypatch.setattr(runtime.os, "chdir", Mock())
+    execute = Mock()
+    monkeypatch.setattr(runtime.os, "execvpe", execute)
+    if mounted:
+        runtime.launch(opencode)
+        assert execute.call_args.args[2]["AGENTCORE_REQUIRED_MOUNT"] == "/mnt/workspace"
+    else:
+        with pytest.raises(SystemExit):
+            runtime.launch(opencode)
+        execute.assert_not_called()
 
 
 @pytest.mark.parametrize("image_variable", ["HERDR_RUNTIME_TEST_IMAGE", "CODEX_RUNTIME_TEST_IMAGE"])

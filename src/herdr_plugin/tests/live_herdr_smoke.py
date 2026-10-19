@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -219,6 +220,7 @@ def run(
     connection_file: Path | None = None,
     check_runtime_role: bool = False,
     agent_kind: str = "opencode",
+    check_shell_time: bool = False,
 ):
     if os.environ.get("HERDR_ENV") != "1":
         raise UserError("Run this probe from a Herdr-managed pane.")
@@ -387,6 +389,34 @@ def run(
                 "PASS: follow-up model turn after reattach retained conversation context",
                 flush=True,
             )
+            if check_shell_time:
+                response = herdr.call(
+                    "agent",
+                    "prompt",
+                    pane,
+                    "Use the shell tool to execute exactly: date -u '+%Y-%m-%dT%H:%M:%SZ'. "
+                    "Do not estimate the time, run other commands, or change files. "
+                    "Reply only with SHELL_TIME= followed by the command output.",
+                    "--wait",
+                    "--timeout",
+                    "90000",
+                    check=False,
+                    timeout=100,
+                )
+                if (
+                    response.returncode
+                    or (herdr.agent(pane) or {}).get("agent_status") == "blocked"
+                ):
+                    raise UserError("Shell-time prompt failed or needs approval; no input retried.")
+                match = until(
+                    lambda: re.search(
+                        r"SHELL_TIME=(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)", herdr.read(pane)
+                    ),
+                    "interactive shell-time reply",
+                    30,
+                )
+                print("PASS: Herdr interactive shell-time reply " + match[1], flush=True)
+                print("Shell-time screen:\n" + herdr.read(pane), flush=True)
             herdr.call("pane", "send-text", pane, "\x1dd")
             until(lambda: store.load(record["id"])["status"] == "detached", "final detach", 15)
             until(
@@ -437,6 +467,11 @@ def main():
         action="store_true",
         help="Verify the owned runtime's role environment without adding a compatibility shim",
     )
+    parser.add_argument(
+        "--check-shell-time",
+        action="store_true",
+        help="Request a read-only date command after the attachment checks",
+    )
     args = parser.parse_args()
     try:
         run(
@@ -445,6 +480,7 @@ def main():
             args.connection_file,
             args.check_runtime_role,
             args.agent_kind,
+            args.check_shell_time,
         )
     except Exception as exc:
         message = str(exc) if isinstance(exc, UserError) else type(exc).__name__

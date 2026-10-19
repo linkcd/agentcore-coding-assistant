@@ -9,6 +9,8 @@ It does not introduce a separate end-user platform.
 The prototype creates agents, reattaches original PTYs, detaches, and requests compute stop.
 Sections marked **target** describe planned behavior.
 The current connector refuses to relaunch work when a previously used PTY is missing.
+The latest verification date is 2026-10-19. See [packaging and validation](#packaging-and-validation) for current deployment and test results.
+The filesystem profile already mounts shared coding files. Persistent home, conversation checkpoints, and automatic recovery remain targets.
 
 The repository separates runtime definitions, the Herdr connector, and their connection contract.
 The runtime component owns example images and official CDK definitions selected through named settings profiles.
@@ -214,17 +216,17 @@ The contract uses only the standard library and has no AWS, Docker, Herdr, or fi
 | `connector.py` | Interpret shell frames, launch once, reconnect, and handle termination. |
 | `terminal.py` | Manage raw mode, nonblocking output, bounded input, detach, and resize. |
 | `herdr.py` | Call public Herdr APIs and report transport metadata. |
-| Runtime `app.ts` and `profile.ts` | Select and read a named settings file. |
-| Runtime `runtime-stack.ts` | Define official CDK runtime, IAM, Docker assets, and outputs. |
-| Runtime `profiles/` | Supply example settings such as `opencode` and `codex`; names are not enums. |
-| Runtime `common/` | Share the Dockerfile, startup, environment inheritance, HTTP health, work-lease reader, and license. |
-| Runtime `opencode/image/` | Supply the OpenCode adapter, configuration, dependency warmup, and work-event plugin. |
-| Runtime `codex/image/` | Supply the Codex adapter with its native AWS provider. |
+| Runtime `cdk/app.ts` and `cdk/profile.ts` | Select and read a provision profile. |
+| Runtime `cdk/runtime-stack.ts` | Define official CDK runtime, IAM, image assets, network/storage bindings, and outputs. |
+| Runtime `provision_profiles/` | Supply the Codex, OpenCode, and OpenCode/S3 filesystem deployment examples; names are not enums. |
+| Runtime `agent_images/common/` | Share image build, startup, environment inheritance, mount readiness, health, and license. |
+| Runtime `agent_images/opencode/` | Supply the OpenCode adapter, configuration, dependency warmup, and work-event plugin. |
+| Runtime `agent_images/codex/` | Supply the Codex adapter, native AWS provider, and build-installed permission preset. |
 | Contract `connection.py` | Validate and encode connection data without operational side effects. |
 | `src/*/tests/` | Hold each component's offline tests and applicable live probes. |
 
 Connector modules are under `src/herdr_plugin/herdr_agentcore/`.
-Runtime modules are directly under `src/agentcore_runtime/`, with definitions in `opencode/` and future assistant folders.
+Runtime infrastructure uses `src/agentcore_runtime/cdk/`. Image sources use `agent_images/`; deployment inputs use `provision_profiles/`.
 Contract modules are under `src/runtime_contract/agentcore_contract/`.
 Profile formats are not publicly released. Internal version fields do not imply a backward-compatibility promise.
 Infrastructure has no custom provisioning executable or Python distribution. Use the official CDK CLI.
@@ -245,7 +247,7 @@ All profiles with no hint use an ordinary terminal. The connector never infers O
 Herdr must support an agent kind before its recognition hint can enable agent APIs.
 An API-only runtime does not become a terminal assistant merely because its ARN is valid.
 The contract does not yet define persistent checkpoints or resume operations.
-The supplied `opencode` settings declare `/app/run.sh`. CDK context can override the declared command.
+Image definitions declare `/app/run.sh`. A provision profile can override the declared command.
 The override changes descriptor argv, not the image's container `CMD`. The selected executable must exist in the runtime.
 See the [existing-runtime guide](CONNECT_EXISTING_RUNTIME.md) for registration and verification.
 
@@ -253,48 +255,59 @@ See the [existing-runtime guide](CONNECT_EXISTING_RUNTIME.md) for registration a
 
 Standard `cdk deploy` deploys the named runtime settings independently of the connector.
 The supplied OpenCode and Codex images adapt `awslabs/agentcore-samples`.
-Repository, package, and image retain its Apache-2.0 license and NOTICE.
+The repository and Python packages contain Apache-2.0 license files.
+Runtime sources contain `agent_images/common/LICENSE` and the OpenCode adapter's `NOTICE`. Preserve existing license and attribution files.
 No research checkout, GitHub gateway, or shared sample deployment file is required.
 
 ### Deployment sequence
 
-1. Select `profiles/NAME.json` with CDK context `runtimeProfile=NAME`.
+1. Select the repo's `provision_profiles/NAME.json` with CDK context `runtimeProfile=NAME`. Resolve its env references from `src/agentcore_runtime/.env`; the adjacent `.sample.env` defines the local bindings to fill.
 2. Confirm the AWS identity, target region, and CDK bootstrap environment.
 3. Run `cdk synth` to validate the application and generate its template/asset manifest.
 4. Run `cdk diff` and review IAM, image, runtime, and output changes.
 5. Run `cdk deploy`. CDK builds and publishes the ARM64 Docker asset through the bootstrap repository.
 6. CloudFormation creates or updates the execution role, policies, and native `AWS::BedrockAgentCore::Runtime` resource.
-7. CDK writes resolved outputs to the private `--outputs-file` path after success.
+7. CDK writes resolved outputs to the ignored `.local/deployments/` outputs path after success.
 8. Import the selected stack's `ConnectionDescriptor` with the connector.
 
-The supplied settings name the stacks `HerdrOpenCodeRuntime` and `HerdrCodexRuntime`.
+The current settings name `HerdrOpenCodeRuntime`, `HerdrOpenCodeS3FilesystemRuntime`, and `HerdrCodexRuntime`.
 These are example profile properties, not connector constants.
 Role trust restricts access to the account and matching runtime name. CDK's repository grant supplies image-pull access.
-Model permissions follow the profile's inference service. The OpenCode example uses Bedrock Runtime; the Codex example uses Mantle.
-The same generic stack consumes both settings files.
+Model permissions and client selection follow `inference.bedrock-endpoint-type`.
+It accepts exactly `"runtime"` or `"mantle"`. All three samples select Runtime.
+These are project-defined configuration values, not built-in CDK enum values.
+The same generic stack consumes each settings file and exports the choice as `BEDROCK_ENDPOINT_TYPE` in the container environment.
+The entrypoint resolves `.env`, the provision profile, and the image definition before constructing the stack.
+The stack receives resolved properties. It does not read environment variables or configuration files.
+`runtimeProfile` is the project selection context. Per-field context overrides are rejected; exported shell variables do not replace `.env` bindings.
+Deployment region comes from the profile. Account identity comes from the authenticated CDK Toolkit and must be resolved before synthesis.
 
 The official libraries are `aws-cdk-lib`, `constructs`, and the `aws-cdk` CLI.
 The project uses TypeScript, Node.js 22+, npm, and Docker with ARM64 support.
 The existing CDK bootstrap provides deployment roles and asset storage. It is shared infrastructure, not part of the runtime's teardown.
 
 Runtime model authorization is separate from deployment authorization. Verify model availability and account access.
-The example stack uses IAM authentication, public networking, HTTP health, 900-second idle timeout, and a 28,800-second maximum lifetime.
+Profiles select lifecycle values and optional VPC/storage bindings. Codex and plain OpenCode use PUBLIC mode; the filesystem sample supplies a VPC and S3 Files access point.
+The filesystem sample grants access-point-scoped mount/write access and required metadata reads. It has no direct-S3 grants or bucket lookup.
+All samples declare a 900-second idle timeout and 28,800-second maximum lifetime in their profiles.
 Deployment does not create an assistant session. The new-agent action does that.
 
 ### Runtime bootstrap and authentication
 
 The image defaults to OpenCode 1.18.30 and checks its installed version during build.
 Its HTTP service runs as an unprivileged user.
-Both supplied profiles use `common/Dockerfile` with explicit npm package/version, executable, and adapter directory arguments.
+All supplied profiles use `agent_images/common/Dockerfile` with explicit npm package/version, executable, and adapter directory arguments.
 CDK stages shared files and the selected adapter only; another adapter's changes do not invalidate this image asset.
 The shared `/app/run.sh` executes `launch.py`, which uses `/app/assistant.py` for environment and argument preparation.
-The OpenCode adapter forwards native argv, including `--session`, and selects `OPENCODE_WORKDIR` or existing `HOME`.
+The OpenCode adapter forwards native argv, including `--session`. The common launcher selects `AGENTCORE_WORKDIR` or the image home.
 It preserves user configuration and does not grant automatic tool approval.
 
 The OpenCode adapter sets `OPENCODE_DISABLE_AUTOUPDATE=1` for launch and build-time dependency warmup.
 OpenCode's updater reads global configuration; the extra config's `autoupdate: false` alone did not suppress its dialog.
 
 `OPENCODE_CONFIG=/app/opencode.json` supplies the Bedrock provider, region, and model.
+The adapter adds the startup model's native Runtime or Mantle SDK selection to `OPENCODE_CONFIG_CONTENT`.
+Other JSON settings remain intact. Native catalog routes apply to later model choices.
 `AWS_PROFILE=default` selects OpenCode's refreshable Node provider chain inside AgentCore.
 Without injected keys or credential files, the chain resolves the execution role.
 The launcher does not fetch IMDS credentials, export keys, or save tokens.
@@ -302,10 +315,16 @@ It copies only allowlisted non-secret deployment settings from PID 1 when the sh
 
 The image includes a local OpenCode activity plugin and health reader.
 The build resolves plugin SDK dependencies so the default home can load the hook without package downloads.
-The deployed image still has ephemeral coding state and no S3 Files mount.
+The PUBLIC profiles have no S3 Files mount. Their coding files and assistant state are ephemeral.
+The filesystem provision profile mounts a supplied access point at `/mnt/workspace` and requires that mount before launch.
+After the documented directory-marker repair, 4 KiB and 8 MiB write/read tests passed across separate sessions.
+Home and conversation state still use local runtime storage. Persistent home, checkpoints, and broader cold-read/performance tests remain pending.
 
-The Codex example pins version 0.163.0 and selects the native `amazon-bedrock` provider.
-It forwards native argv, keeps approvals enabled, and does not overwrite user configuration or generate a one-time bearer token.
+The Codex example pins version 0.163.0 and selects the native `amazon-bedrock-runtime` provider for GPT-5.6 Sol.
+An explicit Mantle selection uses `amazon-bedrock`. Both use the native AWS credential chain and the declared inference region.
+Runtime selection disables hosted web search, which is unavailable on that endpoint.
+It forwards native argv without overriding approval policy or generating a one-time bearer token.
+The build hook installs an initial restricted permission preset. Startup preserves existing user configuration.
 Both images use the shared health reader. The Codex adapter has no work-event source, so it currently supplies readiness only.
 See the [runtime comparison and status evidence](../src/agentcore_runtime/README.md#opencode-and-codex-comparison) for Herdr's separate native support and remaining validation gaps.
 
@@ -314,7 +333,10 @@ See the [runtime comparison and status evidence](../src/agentcore_runtime/README
 Use `cdk diff` and `cdk deploy` with the same stack, profile, account, and region.
 New sessions use the new image. Existing processes do not restart or reload their environment.
 
-When surviving sessions need earlier Bedrock models, declare those IDs through `retainedModelIds` context.
+Sample roles permit Bedrock model invocation on all resources so live model selection does not need a model-ID allowlist.
+The role grants inference/discovery actions, not Bedrock administration. Account retention and service controls still apply.
+The user authorized Runtime retention `default` in Ireland and an Ireland-only exception to the managed zero-retention guard.
+The separate Mantle setting remains `none`. Profile deployment does not change those account controls.
 CDK does not read and merge arbitrary prior IAM policies. Its declared configuration is authoritative.
 Review removals before updating. CloudFormation rollback does not create a transaction across every asset and local profile.
 A failed deployment can leave published assets or a failed stack. Inspect standard CDK/CloudFormation events before retrying.
@@ -440,9 +462,11 @@ Unknown remote IDs need an explicit adoption flow. Do not guess the shell or con
 
 ## Persistent coding files through S3 Files
 
-**Target:** consume an S3 Files access point mounted by the runtime.
+**Implemented baseline:** the filesystem profile uses an existing S3 Files access point, VPC bindings, mount readiness, and a mounted working directory.
+Cross-session file tests passed for 4 KiB and 8 MiB files. The PUBLIC profiles have no shared mount.
+**Target:** add per-binding namespaces, persistent configuration/skills, conversation checkpoints, and recovery.
 Mount/root are deployment settings, not per-user identity resources.
-Example configuration shape:
+Example service configuration shape:
 
 ```json
 {
@@ -498,7 +522,9 @@ The reviewed documentation describes reset after 14 days without invocation and 
 AgentCore Instances with capacity-provider EBS are another compute choice; they are not the current microVM deployment.
 See the [checkpoint proposal](SESSION_MANAGEMENT_PROPOSAL.md#6-opencode-database-and-checkpoint-strategy).
 
-Persistent-home/cwd integration, automatic conversation capture, and this storage layout remain unimplemented.
+Profile-selected working directory and mount-root startup are implemented. The filesystem sample starts at `/mnt/workspace`.
+The `/mnt/s3files/herdr/<binding-uuid>` layout above is a proposal, not the deployed layout.
+Persistent home, per-binding repository selection, automatic conversation capture, and that storage layout remain unimplemented.
 
 ## Resume semantics — target
 
@@ -533,7 +559,7 @@ flowchart TD
 
 | Operation | Contract | Status |
 | --- | --- | --- |
-| New | Allocate independent binding/session; initialize or explicitly select files. | IDs and launch implemented; persistence pending. |
+| New | Allocate independent binding/session; initialize or explicitly select files. | IDs, launch, and profile-selected mount/cwd are implemented. Automatic per-binding storage remains pending. |
 | Attach | Reattach original live PTY. | Implemented. |
 | Detach | Disconnect transport without stop. | Implemented. |
 | Stop runtime session | Stop all session compute/processes; keep records and persistent files. | API request implemented. No completion waiter or resume. |
@@ -605,9 +631,9 @@ External image owners can supply a reviewed wrapper through explicit argv when r
 The connector does not implement or choose runtime authentication.
 
 That wrapper resolved the real executable, created a private temporary shim, and prepended it to `PATH`.
-It then runs the original launcher.
-When the launcher invokes OpenCode, the shim removes four static credential variables and sets `AWS_PROFILE=default`.
-It executes the original binary with unchanged arguments.
+It then ran the original launcher.
+When the launcher invoked OpenCode, the shim removed four static credential variables and set `AWS_PROFILE=default`.
+It executed the original binary with unchanged arguments.
 
 The removed variables are `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, and `AWS_SECURITY_TOKEN`.
 Removal must occur after initialization because the sample launcher exports a fresh snapshot during startup.
@@ -654,8 +680,9 @@ stateDiagram-v2
 
 ### Deployed session lifecycle
 
-The runtime control API confirmed `idleRuntimeSessionTimeout: 900`, `maxLifetime: 28800`, and no filesystem configurations.
-These values come from `runtime_template()` in `deployment.py`.
+The latest control-plane checks confirmed `idleRuntimeSessionTimeout: 900` and `maxLifetime: 28800` for all three profiles.
+These values come from each provision profile's `lifecycle` settings and are applied by `cdk/runtime-stack.ts`.
+The PUBLIC profiles have no filesystem configuration. The filesystem profile has one S3 Files mount.
 
 | Limit or operation | Meaning |
 | --- | --- |
@@ -665,7 +692,7 @@ These values come from `runtime_template()` in `deployment.py`.
 | Scope | Each session has its own compute/timers. Termination does not delete the deployment, role, image, or local record. |
 | Detach | Close transport without requesting termination. |
 | Stop | Request whole-session termination. No completion waiter exists. |
-| Data | Current coding files and conversation state are ephemeral. Saved IDs cannot reconstruct them. |
+| Data | PUBLIC-profile coding files and all default assistant home/conversation state are ephemeral. The filesystem profile's mounted coding files persist separately. Saved IDs alone cannot reconstruct a conversation. |
 
 Full-duration platform expiry tests remain pending.
 The exact effect of interactive Shell traffic on idle accounting has not been validated here.
@@ -674,7 +701,8 @@ The exact effect of interactive Shell traffic on idle accounting has not been va
 
 The earlier deployed bridge used session events and per-session question/permission waits.
 It passed cloud tests for work, a question/reply cycle, completion, and process death.
-The current concurrency revision is deployed. Fresh cloud activity and model/attachment probes passed on the updated image.
+That concurrency-aware bridge is part of the current OpenCode image. Earlier cloud activity probes passed, and the latest local image test passed real work and process-death transitions.
+The latest six-session cloud check tested model/tool calls and folder access; it did not repeat the question/wait health probe.
 Concurrent and nested-tool wait cases have offline event-test coverage; live permission-dialog coverage remains pending.
 
 The current `activity-plugin.mjs` uses public OpenCode 1.18.30 `event`, `dispose`, `tool.execute.before`, and `tool.execute.after` hooks.
@@ -725,9 +753,52 @@ These increments require no Cognito or Jindouyun platform dependency.
 
 ## Packaging and validation
 
+### Latest verification — 2026-10-19
+
+A later all-profile verification rebuilt both ARM64 images and passed 21 CDK tests and all 212 Python tests.
+CDK deploy completed for all three numbered profiles with no changes. Runtime/DEFAULT versions remain 4 for Codex and 1 for both OpenCode profiles; all are READY.
+Two user-requested interactive sessions per profile passed real date and read-only folder-access checks in three Herdr tabs.
+A separate storage probe verified matching 4 KiB and 8 MiB file contents across sessions and removed its test files.
+Its three disposable sessions received stop requests. The six user-requested sessions remained connected.
+Final CDK diffs showed no changes. See the [all-profile results](../src/agentcore_runtime/README.md#all-profiles-and-six-interactive-sessions--2026-10-19).
+
+The latest Codex revision uses GPT-5.6 Sol through native Bedrock Runtime in Ireland.
+The image, model, endpoint environment, and inference IAM update replaced the GPT-OSS/Mantle revision.
+CloudFormation reached `UPDATE_COMPLETE`; Runtime/DEFAULT version 4 is `READY`. The final CDK diff showed no changes.
+Ireland Runtime retention read back as `default` before and after deployment. This deployment did not change account controls.
+Fresh sessions passed real Sol inference, native sandbox isolation, a model-driven `date` call, and runtime-role credential checks.
+An isolated Herdr probe passed default selection, recognition, detach/attachment, context-preserving follow-up, and an interactive `date` call.
+Both probe sessions received stop requests, and the isolated server stopped.
+The ARM64 build, TypeScript check, 21 CDK tests, and 203 Python tests passed; nine other opt-in Python checks were skipped.
+See the [dated Runtime results](../src/agentcore_runtime/README.md#sol-on-native-bedrock-runtime--2026-10-19) for scope and remaining limits.
+
+### Historical profile and image validation
+
+The following results describe earlier revisions. Their runtime versions, retention modes, and pending checks are not the current deployment state.
+
+The earlier model/storage revision selected GLM 5.3 for Codex and retained Bedrock Runtime in Ireland.
+Runtime/DEFAULT version 2 reached READY. Real inference, sandbox checks, and a model-driven `date` call passed under retention mode `none`.
+The storage repair used AWS's documented POSIX metadata on the missing S3 directory marker, matching the sample's non-root UID/GID 1000 design.
+The unchanged filesystem runtime passed 4 KiB and 8 MiB write/read checks across separate sessions. No new storage layer or broader runtime permissions were introduced.
+Tests passed 21 CDK cases and 212 Python cases; final Codex and filesystem CDK diffs showed no changes.
+
+The numbered-profile revision passed 21 CDK tests and 212 Python tests, then deployed all three stacks in `eu-west-1`.
+All Runtime/DEFAULT endpoints reached version 1 and READY. Both OpenCode model calls passed; Codex/Sol was blocked by the unchanged `none` retention setting.
+The access-point-only sample mounted successfully, but directory creation failed: the mounted root was 0:0 with mode 0755 and the agent was 1000:1000.
+That initial run did not qualify writable storage. The later directory-marker repair and cross-session tests resolved this gap.
+All own smoke-test sessions received stop requests, and final CDK diffs showed no changes.
+
+The configuration review passed 20 CDK tests, 212 Python tests, and synthesis of all three profiles.
+Tests verify the file configuration boundary, profile-selected regions and models, stable logical IDs, and the existing IAM-policy dependency.
+That filesystem template used access-point permissions without a bucket lookup or direct-S3 grants. File-I/O qualification was pending at that stage.
+
+The endpoint-selection revision passed 16 CDK tests and 212 Python tests with both rebuilt ARM64 images.
+All three samples synthesized successfully. Checks cover both endpoint values, IAM/environment agreement, and native client configuration.
+These checks are local. The cloud results below apply to earlier image and model selections.
+
 The shared-image refactor passed local checks and later cloud E2E tests on separate disposable deployments for both examples.
 Both passed real model calls through Herdr, credential inspection, detach/attachment, follow-up context, and explicit stop requests.
-OpenCode also passed deployed activity-health checks. Codex work-event reporting, sandbox/tool execution, and long-duration behavior remain gaps.
+OpenCode also passed deployed activity-health checks. Later Codex shell-tool and isolation tests passed; work-event reporting and long-duration behavior remain gaps.
 Both temporary stacks and runtimes were confirmed deleted. One native CloudFormation deletion timeout required a retry after the runtime was confirmed absent.
 Detailed findings and warnings are recorded in the runtime root README. The historical sections below describe prior implementations.
 The refactor passed 180 Python tests with both rebuilt images, six CDK tests, and TypeScript checks.
@@ -735,16 +806,21 @@ The full assistant comparison and Herdr detection evidence are maintained only i
 After disposable qualification and commit, the shared images were deployed to persistent OpenCode and Codex stacks.
 Both runtimes and their DEFAULT endpoints reached READY. Herdr imported both CDK output descriptors and retained OpenCode as its default.
 New sessions on both persistent deployments passed the model/role/attachment/follow-up/stop probe. OpenCode's activity-health probe also passed.
-The persistent deployments remain available after cleanup of the probes' own sessions and servers.
+Those deployments remained available after probe cleanup. They were later retired before the numbered replacements were created.
+The later Codex sandbox fix reached persistent runtime and DEFAULT endpoint version 2, both READY.
+Its native permission preset passed real `date` tool execution, scoped filesystem isolation, and an interactive Herdr tool call after attachment.
+The runtime root README records the checks, containerd-alias cause, and remaining limits. Existing user sessions were not replaced.
 
-Herdr installs from a public GitHub repository with a root manifest.
+### Packaging and repeatable checks
+
+Herdr supports installation from a public GitHub repository with a root manifest. This project has been tested through local linking.
 The build command is `uv sync --frozen --no-dev`; it installs only the connector and its dependencies, including the contract.
 Runtime infrastructure is a separate npm/CDK project, not a Python package or console entrypoint.
 Community discovery uses the `herdr-plugin` topic. Publication and official endorsement are separate.
 
 Code and tests live inside the three `src/` components. Each has a README and package metadata.
-Each wheel includes only its component. Only the runtime wheel includes images and provisioning code.
-Each source distribution includes its component code, tests, README, and applicable licenses.
+Each Python wheel includes only its component. CDK and image sources are not Python wheels.
+Each Python source distribution includes its component code, tests, README, and applicable licenses. Runtime infrastructure has no Python distribution.
 Root architecture documents and the Herdr manifest remain repository-level files.
 See the [plugin review](PLUGIN_GUIDELINES_REVIEW.md).
 
@@ -755,14 +831,19 @@ uv run --frozen ruff format --check src
 HERDR_TEST_BINARY="$(command -v herdr)" uv run --frozen pytest -q --tb=short
 uv run --frozen python src/herdr_plugin/tests/repository_privacy.py
 uv build --all-packages
+uv run --frozen python src/runtime_contract/tests/check_distributions.py --dist dist
+npm run check --prefix src/agentcore_runtime/cdk
+npm test --prefix src/agentcore_runtime/cdk
 ```
 
 Default tests use fake transports, a local WebSocket server, and local PTYs. They make no AWS calls.
 The optional Herdr binary test uses an isolated disabled registry.
 Node tests cover activity events; Python tests cover process-bound leases and HTTP health.
 
-The CDK/profile implementation passed 174 Python tests with both image-test flags enabled, including descriptor/import, explicit-command, recognition-hint, and dependency-boundary checks.
-Five CDK tests check native resources, profile selection, command output, and scoped permissions. Both example profiles synthesize successfully.
+### Historical packaging and custom-provisioner validation
+
+The earlier CDK/profile implementation passed 174 Python tests with both image-test flags enabled, including descriptor/import, explicit-command, recognition-hint, and dependency-boundary checks.
+At that stage, five CDK tests checked native resources, profile selection, command output, and scoped permissions. Both then-existing example profiles synthesized successfully.
 ARM64 runtime tests cover OpenCode health transitions and Codex CLI startup. Later cloud tests verified both model paths; Codex has no busy-health claim.
 The connector and Python contract build two wheels and source distributions. Infrastructure has separate CDK assertions and synthesis checks.
 Isolated wheel installations passed descriptor export/import. Neither application required the other application package.
@@ -784,13 +865,14 @@ Earlier direct Dockerfile builds timed out while resolving public-base metadata,
 An intermediate local overlay image passed tests. The later full provisioner build succeeded with its temporary Docker configuration.
 The deployed artifact came from that full build, not the intermediate overlay.
 
-Current tests cover typed record errors, extra-field preservation, atomic sync order, safe error classification, launch identity, and terminal backpressure.
-Deployment tests now cover unreadable templates, image failure before IAM changes, policy/runtime failure, retained statements, and descriptor publication last.
+That revision's tests covered typed record errors, extra-field preservation, atomic sync order, safe error classification, launch identity, and terminal backpressure.
+Its custom-provisioner tests covered unreadable templates, image failure before IAM changes, policy/runtime failure, retained statements, and descriptor publication last. Those deployment tests were removed with the custom provisioner.
 The earlier implementation was deployed after its checks. The updated runtime and default endpoint reached READY.
 Fresh probes verified shell work, model generation, question wait/reply/completion, and process-death cleanup through the deployed health service.
 A separate isolated Herdr probe passed default selection, role-only Bedrock inference, detach/reattach, and a context-aware follow-up.
 Both disposable runtime sessions and the isolated Herdr server were stopped.
-The saved default profile is now `opencode-agentcore-runtime`. Actual deployment identifiers remain outside the repository.
+At that stage, the saved default profile was `opencode-agentcore-runtime`. Current numbered imports do not automatically replace an older default.
+Actual deployment identifiers remain out of Git.
 The dated sections below retain evidence from earlier revisions.
 
 ### Live validation — 2026-10-16
@@ -798,7 +880,7 @@ The dated sections below retain evidence from earlier revisions.
 The baseline used Herdr 0.9.5, OpenCode 1.18.30, and Bedrock Claude Sonnet 4.5.
 Probes used fresh runtime IDs and isolated Herdr servers/configuration/state/sockets.
 They stopped all their own sessions and servers. They left the caller's server running.
-Actual deployment and session identifiers remain outside the repository.
+Actual deployment and session identifiers remain out of Git.
 
 Verified:
 
@@ -813,11 +895,11 @@ AgentCore also replays buffered output on attachment. Probes select the newest r
 After authorizing a live test, use one of these commands:
 
 ```bash
-uv run python src/herdr_plugin/tests/live_agentcore_smoke.py --runtime-arn "$RUNTIME_ARN"
-uv run python src/herdr_plugin/tests/live_herdr_smoke.py --runtime-arn "$RUNTIME_ARN"
-uv run python src/herdr_plugin/tests/live_herdr_smoke.py --runtime-arn "$RUNTIME_ARN" --connection-file "$CONNECTION_FILE"
-uv run python src/herdr_plugin/tests/live_herdr_smoke.py --runtime-arn "$RUNTIME_ARN" --check-runtime-role
-uv run python src/agentcore_runtime/tests/live_runtime_activity.py --runtime-arn "$RUNTIME_ARN" --model-turn
+uv run --frozen python src/herdr_plugin/tests/live_agentcore_smoke.py --runtime-arn "$RUNTIME_ARN"
+uv run --frozen python src/herdr_plugin/tests/live_herdr_smoke.py --runtime-arn "$RUNTIME_ARN"
+uv run --frozen python src/herdr_plugin/tests/live_herdr_smoke.py --runtime-arn "$RUNTIME_ARN" --connection-file "$CONNECTION_FILE"
+uv run --frozen python src/herdr_plugin/tests/live_herdr_smoke.py --runtime-arn "$RUNTIME_ARN" --check-runtime-role
+uv run --frozen python src/agentcore_runtime/tests/live_runtime_activity.py --runtime-arn "$RUNTIME_ARN" --model-turn
 ```
 
 Use optional `--aws-profile` for host identity selection.

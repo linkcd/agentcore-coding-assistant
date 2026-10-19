@@ -20,13 +20,14 @@ def test_source_has_exactly_three_components_with_readmes():
     assert {path.name for path in (ROOT / "src").iterdir() if path.is_dir()} == expected
     for name in expected:
         assert (ROOT / "src" / name / "README.md").is_file()
-        metadata = "package.json" if name == "agentcore_runtime" else "pyproject.toml"
+        metadata = "cdk/package.json" if name == "agentcore_runtime" else "pyproject.toml"
         assert (ROOT / "src" / name / metadata).is_file()
     runtime = ROOT / "src/agentcore_runtime"
-    assert (runtime / "cdk.json").is_file()
+    assert (runtime / "cdk/cdk.json").is_file()
     assert not (runtime / "cli.py").exists()
     assert not (runtime / "pyproject.toml").exists()
-    assert (runtime / "opencode").is_dir()
+    assert (runtime / "agent_images/opencode").is_dir()
+    assert (runtime / "provision_profiles").is_dir()
     assert not (runtime / "agentcore_runtime").exists()
 
 

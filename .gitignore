@@ -17,9 +17,10 @@ __pycache__/
 .coverage
 .DS_Store
 
-# Runtime configuration and credentials belong outside this repository.
+# Local deployment values, credentials, and generated state must not be tracked.
 .env
 .env.*
+!/src/agentcore_runtime/.sample.env
 runtime_config*.json
 *.connection.json
 *.connection.json.lock

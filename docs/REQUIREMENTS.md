@@ -4,7 +4,7 @@
 
 Provide a community Herdr plugin for coding agents in AgentCore Runtime.
 Separate assistant runtime definitions, terminal connection, and a small shared contract.
-`opencode` and `codex` are example named runtime settings. Their names are references, not a connector enum.
+The three sample provision profiles select Codex/GPT-5.6 Sol PUBLIC, OpenCode/Kimi PUBLIC, and OpenCode/Kimi with VPC/S3 Files. Their names are references, not a connector enum.
 See the [design glossary](DESIGN.md#glossary) for technical abbreviations.
 
 ## Scope authority
@@ -22,7 +22,7 @@ Exclude its proposed CLI/control plane, Cognito, end-user accounts, tenant owner
 - Support Python 3.11+ with uv-managed dependencies.
 - Provision the owned runtime or configure an existing AgentCore runtime with WebSocket Shell access.
 - Require a local Docker engine with Buildx/ARM64 support for provisioning.
-- Run connectors on the Herdr server host. Run OpenCode and its tools in AgentCore.
+- Run connectors on the Herdr server host. Run the selected assistant and its tools in AgentCore.
 - Permit laptop-hosted management for development. Use cloud-hosted management for unattended operation.
 
 ## Deployment target
@@ -65,21 +65,21 @@ Process replacement and recovery after compute termination remain next-increment
 | --- | --- |
 | F01 | Use a standalone Herdr plugin with public manifest and CLI APIs. Support community installation and updates. |
 | F02 | Configure named profiles with ARN, region, endpoint, optional host AWS profile, explicit launch argv, and optional agent kind. Never infer a command or assistant. |
-| F03 | Start a remote agent in a Herdr pane. Run the connector on the management host and OpenCode/tools in AgentCore. |
+| F03 | Start a remote agent in a Herdr pane. Run the connector on the management host and the selected assistant/tools in AgentCore. |
 | F04 | Allocate distinct runtime-session and shell IDs for each new independent agent. |
 | F05 | Forward terminal bytes in both directions. Preserve TUI controls, Unicode, paste, and interrupts. |
 | F06 | Forward initial dimensions and later resize events, including after reconnect. |
-| F07 | Use Herdr's OpenCode recognition and screen-derived lifecycle detection. Report connection health separately. |
+| F07 | Use Herdr's native recognition and screen-derived lifecycle detection for the explicit agent kind. Report connection health separately. |
 | F08 | Save both remote IDs for attachment to the original PTY while it exists. |
 | F09 | Retry classified transient connection failures within a bounded window. Re-sign connections. Never replay uncertain launch commands or input. |
 | F10 | Distinguish terminal detachment from explicit compute and process stop. |
 | F11 | Label saved status as last-known state. Prevent competing local attachments. Report damaged records without hiding healthy records. |
 | F12 | Preserve configuration, records, and existing profile snapshots across updates. |
-| F13 | Export a compatible launch command for the sample's PATH-based credential wrapper from the runtime component. Preserve initialization and host authentication. |
+| F13 | Export explicit launch argv from the runtime component. Keep image-specific initialization and credential-provider setup in the runtime adapter; preserve host authentication. |
 | F14 | Separate the runtime CDK project, Herdr connector package, and shared contract. Include attribution and avoid research-checkout dependencies. |
 | F15 | Use official AWS CDK constructs for image assets, an execution role, and an IAM-authenticated runtime. Export connection data through stack outputs. |
 | F16 | Use the execution role and a refreshable SDK provider for Bedrock. Do not fetch, export, or persist credential snapshots. |
-| F17 | Use standard CDK synth/diff/deploy/destroy and CloudFormation state. Declare model permissions needed by surviving sessions. Do not overwrite connector profiles on deployment failure. |
+| F17 | Use standard CDK synth/diff/deploy/destroy and CloudFormation state. Permit sample sessions to switch available Bedrock models without a per-model IAM update. Do not overwrite connector profiles on deployment failure. |
 | F18 | Start new agents without a profile picker. Honor CLI/controller override before the saved default. Reject invalid or ambiguous selection before remote work. |
 
 ## Lifecycle requirements — next increment
@@ -103,6 +103,9 @@ Parts of L07 already exist in activity reporting, but independent recovery state
 | L12 | Separate detach, stop-shell/process, and stop-runtime-session. Report whole-session impact. Closing a helper pane must not stop sibling work. |
 
 ## Persistent coding-file requirements — next increment
+
+P01 and mount-root startup have an implemented baseline. Cross-session 4 KiB/8 MiB file tests passed.
+The remaining requirements cover complete coding-state persistence, not only a writable shared mount.
 
 | ID | Requirement |
 | --- | --- |
@@ -150,9 +153,16 @@ See [storage design](DESIGN.md#persistent-coding-files-through-s3-files).
 Both applications depend only on the shared contract, not each other.
 The Python and TypeScript contract code uses standard libraries and has no operational side effects.
 Runtime descriptors exclude credentials and host AWS profile selection.
-Every profile requires explicit launch argv. A missing assistant hint selects an ordinary terminal.
+Every connection profile requires explicit launch argv. A missing connection assistant hint selects an ordinary terminal.
 Profiles are unreleased; internal version fields do not require backward-compatibility branches.
-Named runtime profiles declare commands and accept explicit overrides. `opencode` and `codex` are example settings references, not predefined connector values.
+Named provision profiles reference explicit image launch defaults and can override them. Several project profiles can reuse the same OpenCode image.
+Require `inference.bedrock-endpoint-type` with exactly `"runtime"` or `"mantle"`.
+Use the selected value for both inference IAM and the startup model's native client. All three samples use Runtime.
+Reject missing values, old field names, and duplicate derived endpoint environment settings.
+Resolve deployment choices from the selected provision profile and component `.env` at the CDK entrypoint.
+Pass resolved properties into the stack. Reject per-field context overrides and ignore ambient shell variables for profile bindings.
+Use the authenticated CDK Toolkit for account identity. Keep credentials outside deployment files.
+The filesystem sample uses access-point-only permissions and requires no backing-bucket name or prefix input.
 Keep runtime modules directly under their component directory without a duplicate package folder.
 Keep root workspace configuration, the Herdr manifest, and CI in their standard locations.
 
@@ -160,7 +170,7 @@ Keep root workspace configuration, the Herdr manifest, and CI in their standard 
 
 The current implementation does not provide:
 
-- VPC/S3 Files or gateway infrastructure.
+- Creation of VPC/S3 Files resources or gateway infrastructure. Runtime configuration can reference existing VPC/S3 Files resources.
 - Automated EC2/ECS management deployment, recovery, or failover.
 - Windows terminal support.
 - Automatic conversation resume or compute recovery.
@@ -175,20 +185,20 @@ Cognito, per-user runtime authorization catalogs, DynamoDB customer registries, 
 
 | Area | Required outcome | Current evidence |
 | --- | --- | --- |
-| Plugin contract | Herdr accepts the manifest and declared entrypoints. | Offline and isolated Herdr 0.9.5 tests pass. Earlier cloud new/attach/stop actions passed. |
-| New-agent selection | Use explicit override or saved default without a picker. | Offline precedence, required-default, and snapshot tests pass. Earlier two-profile cloud test passed. |
-| Owned runtime | Deploy the image, call Bedrock through its role, and connect. | Earlier creation/update, model, process-environment, attachment, and cleanup tests passed. |
-| Safe updates | Review CDK differences, retain required model access declaratively, and register resolved outputs after success. | CDK assertion tests cover resources, scoped policy, and outputs. Earlier custom-provisioner tests are historical evidence only. |
-| Runtime lifecycle | Report actual work and document per-session limits. | Deployed values are 900 seconds idle and 28,800 seconds maximum, without persistent storage. Full expiry tests remain pending. |
-| Waiting for input | Report idle only when no other tracked work runs. Resume busy reporting after a reply. | A fresh cloud question/reply cycle passed on this revision. Local tests cover concurrent tools, nested tasks, permission requests, errors, and unknown children. |
+| Plugin contract | Herdr accepts the manifest and declared entrypoints. | Offline and isolated Herdr 0.9.5 tests pass. All three current profiles opened two interactive sessions each. The latest Codex probe passed new/attach/stop. |
+| New-agent selection | Use explicit override or saved default without a picker. | Offline precedence, required-default, and snapshot tests pass. The latest six-session check used explicit profiles; the isolated Codex probe verified default selection. |
+| Owned runtime | Deploy the image, call Bedrock through its role, and connect. | All three current profiles passed CDK deploy with no changes and reached READY. Sol and both Kimi profiles passed real model/tool calls. |
+| Safe updates | Review CDK differences, keep sample model invocation independent of the selected model, and register resolved outputs after success. | CDK tests cover invocation-only permissions, scoped storage/trust, and outputs. Earlier custom-provisioner tests are historical evidence only. |
+| Runtime lifecycle | Report actual work and document per-session limits. | All profiles use 900 seconds idle and 28,800 seconds maximum. The filesystem profile mounts S3 Files. OpenCode has activity health; Codex has readiness only. Full expiry tests remain pending. |
+| Waiting for input | Report idle only when no other tracked work runs. Resume busy reporting after a reply. | Earlier OpenCode cloud question/reply cycles passed. Current local tests cover concurrent tools, nested tasks, permission requests, errors, and unknown children. The latest six-session check did not repeat the cloud question/health probe. |
 | Terminal transport | Preserve bytes and resize. Keep detach responsive under output pressure. Restore modes. | Earlier cloud I/O/resize passed. Current PTY tests cover backpressure, partial writes, and closed-descriptor cleanup. |
-| Session identity | Reuse original IDs without a second launch. | Earlier same-PID attachment and context-aware follow-up passed. Current offline tests preserve identity on retry. |
+| Session identity | Reuse original IDs without a second launch. | The latest Codex/Sol probe passed attachment and context-aware follow-up. Earlier OpenCode same-PID and conversation checks passed. Current offline tests preserve identity on retry. |
 | Failure handling | Do not replay uncertain input. Stop retrying after takeover. Refuse a replacement PTY after launch. | Offline tests pass, including classified retryable conflicts. |
 | Storage and updates | Retain snapshots and extra record fields. Isolate damaged records. Prevent competing attachment. | Offline validation, locking, timezone ordering, and file/directory sync tests pass. Managed install/update remains pending. |
-| Real cloud workflow | Support prompts, result collection, attachment, and explicit cleanup. | Five agents completed concurrent retrieval/translation and follow-ups. Dialog and forced-outage coverage remains incomplete. |
+| Real cloud workflow | Support prompts, result collection, attachment, and explicit cleanup. | Six current-profile sessions completed date and folder-access requests in three tabs and were left open for the user. Separate disposable probes cleaned up their files/sessions. Dialog and forced-outage coverage remains incomplete. |
 | Small viewport | Do not misidentify a failed TUI as healthy or send uncontrolled input. | Gap: 35×20 crashes on the tested OpenCode/Bun version. Zooming is a workaround; the complete safe boundary is unknown. |
 | Platform compatibility | Pass on supported macOS/Linux and Python versions. | macOS/Python 3.13 tested locally. Remote CI matrix execution remains pending. |
-| Clean execution | Give new independent work fresh compute and a separate namespace. Preserve selected existing files. | Remote IDs are independent. Persistent-home integration is pending. |
+| Clean execution | Give new independent work fresh compute and a separate namespace. Preserve selected existing files. | Remote IDs are independent. The filesystem sessions share one mount root; automatic per-binding namespaces and persistent home remain pending. |
 | Runtime credentials | Refresh temporary role credentials without stored snapshots. | Fresh model calls and credential-presence checks passed. Full credential rollover remains unverified. |
 | Process recovery | Restore the same binding and conversation in a replacement process/PTY. | Manually verified while compute survived. No automated resume action. |
 | Compute recovery | Restore files and conversation after confirmed compute stop. | Not implemented. |
@@ -198,14 +208,25 @@ Cognito, per-user runtime authorization catalogs, DynamoDB customer registries, 
 | Cloud coordination | Advance a cloud workflow while the laptop is offline. | Workflow implementation and validation pending. |
 | Host recovery | Reconcile retained identities without duplicate workers or actions. | Not implemented. |
 | Remote plugin execution | Use the selected cloud server's plugin, configuration, and instance role. | Remote-machine/SSM deployment validation pending. |
-| Persistent coding files | Preserve files, configuration, skills, and history across worker replacement. | Not implemented. |
-| Remote Working Directory | Start in the selected persistent repository. | Persistent-directory integration pending. |
+| Persistent coding files | Preserve files, configuration, skills, and history across worker replacement. | S3 Files mount/startup and 4 KiB/8 MiB file persistence across separate sessions passed after the AWS directory-marker repair. Configuration/skills migration and conversation checkpoints remain pending. |
+| Remote Working Directory | Start in the selected persistent repository. | Profile-selected working directory and mount-root startup are implemented. Both filesystem sessions started in `/mnt/workspace`. Per-binding repository selection and recovery remain pending. |
 | Multiple shells | Use separate shell IDs with explicit operation scope. Preserve sibling work. | Not implemented. |
 
-The CDK/profile implementation passed local Python, CDK assertion, image, package-boundary, license, link, and requirement-ID checks.
-The `opencode` example was deployed with CDK, imported into the updated connector, and passed fresh cloud activity/model/attachment tests.
-The old custom deployment was removed. Later shared-image E2E tests passed for both examples on disposable cloud runtimes.
-Both model/attachment flows passed; Codex sandbox/tool execution and work-health reporting remain unqualified.
+### Latest verification — 2026-10-19
+
+Both ARM64 builds, TypeScript, 21 CDK tests, and all 212 Python tests passed.
+All three numbered profiles passed CDK deploy with no changes. The latest six-session check passed real model-driven date and read-only folder-access requests.
+Separate-session storage checks verified matching 4 KiB and 8 MiB files, then removed the probe's files and requested stop for its three sessions.
+The six user-requested interactive sessions were left open. Codex work-health and broader tool/approval cases remain unqualified.
+The latest Codex deployment reached Runtime/DEFAULT version 4 with GPT-5.6 Sol on native Bedrock Runtime in Ireland.
+Fresh sessions passed model inference, sandbox isolation, runtime-role checks, attachment, a context-preserving follow-up, and a real `date` tool call.
+Ireland Runtime retention was verified as `default`; the profile deployment did not change account retention controls.
+Both probe sessions received stop requests. The isolated Herdr server stopped, and the final CDK diff showed no changes.
+See the [runtime validation record](../src/agentcore_runtime/README.md#current-validation) for exact test scope.
+
+### Historical validation
+
+The old custom deployment was removed. Earlier shared-image deployments passed model/attachment tests for both assistant kinds and activity tests for OpenCode.
 The following counts describe earlier implementations before the custom provisioner was replaced.
 
 Earlier local validation: 170 offline Python tests passed, with three Docker tests skipped in that run.
@@ -219,7 +240,7 @@ Both disposable sessions and the isolated Herdr server were stopped. Concurrent/
 
 1. Extend dialog, forced-outage, layout, and durable-workflow coverage from the tested baseline.
 2. Migrate binding records to include persistent paths, conversation IDs, and execution generations.
-3. Integrate S3 Files and checkpointing. Validate files, configuration, skills, and database recovery.
+3. Extend the verified S3 Files mount with per-binding paths and checkpointing. Validate coding tools, configuration, skill discovery, and database recovery.
 4. Deploy one supervised EC2 manager with retained state and an instance role. Test viewer disconnect and laptop sleep.
 5. Add explicit resume, host reconciliation, additional shells, and scoped stop operations.
 6. Validate managed installation, updates, and the platform matrix before publication.

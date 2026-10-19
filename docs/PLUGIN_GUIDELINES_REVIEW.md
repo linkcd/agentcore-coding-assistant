@@ -4,6 +4,7 @@
 
 This review uses the official [Herdr 0.9.5 plugin documentation](https://herdr.dev/docs/0.9.5/plugins/) and [agent-wrapper documentation](https://herdr.dev/docs/0.9.5/agents/#vms-and-sandbox-wrappers).
 Version 0.9.5 is the declared minimum and the installed validation version.
+Implementation and validation status were reviewed on 2026-10-19.
 
 Herdr requires a root manifest and executable argv entrypoints.
 It does not prescribe an internal `src/` or `docs/` layout.
@@ -27,7 +28,7 @@ The review is not an official endorsement or a claim of production readiness.
 | Link does not build | README steps install dependencies before linking. `.venv/` is generated runtime state, not distribution source. |
 | Build has no runtime context | The manifest build installs dependencies. It does not call Herdr or provision AWS resources. |
 | Put long-running terminal work in panes | Connectors run as pane commands. Exit cancels local I/O and restores terminal modes. |
-| Expose a host-visible agent hint | The connector re-executes with the saved `agent_kind`. It clears inherited hints for ordinary terminals. Old profiles retain OpenCode recognition. |
+| Expose a host-visible agent hint | The connector re-executes with the saved `agent_kind`. It clears inherited hints for ordinary terminals. The current profiles declare Codex or OpenCode explicitly. |
 | Separate metadata and agent lifecycle | `pane report-metadata` carries transport status. It does not create false agent lifecycle events. |
 | Startup hooks are one-shot | No startup hook is declared. A future reconciliation hook must finish and exit. |
 | Updates preserve user state | Data stays outside installation. Existing connections keep profile snapshots. Full managed-update testing remains pending. |
@@ -56,7 +57,7 @@ pyproject.toml          Packaging and tooling
 uv.lock                 Locked dependencies
 README.md               Goal, setup, and usage
 AGENTS.md, agent.md      Coding-agent instructions
-LICENSE, NOTICE         Licensing and attribution
+LICENSE                 Repository license; component licenses and image attribution live under src/
 .github/workflows/      CI configuration
 src/agentcore_runtime/  Assistant definitions, deployment, README, and tests
 src/herdr_plugin/       Connector, README, and tests
@@ -86,15 +87,22 @@ uv run --frozen ruff check src
 uv run --frozen ruff format --check src
 uv run --frozen python src/herdr_plugin/tests/repository_privacy.py
 uv build --all-packages
-npm ci --prefix src/agentcore_runtime
-npm test --prefix src/agentcore_runtime
+uv run --frozen python src/runtime_contract/tests/check_distributions.py --dist dist
+npm ci --prefix src/agentcore_runtime/cdk
+npm test --prefix src/agentcore_runtime/cdk
 ```
 
 The current layout has Python, CDK assertion, image, and named-profile checks.
+The latest all-profile verification passed both ARM64 builds, 21 CDK tests, and all 212 Python tests.
+All three numbered CDK deployments reported no changes. Their current descriptors were imported under their numbered connection profile names.
+Six user-requested sessions opened in three tabs and passed real date and read-only folder-access checks. They were left open after verification.
+The latest Codex/Sol isolated probe passed new, recognition, attachment, follow-up, shell-tool, and stop operations.
+The filesystem profile also passed a separate cross-session file probe; its temporary files and sessions were cleaned up.
+See the [current runtime results](../src/agentcore_runtime/README.md#current-validation) for deployment versions and validation limits.
 Independent connector/contract distributions and descriptor import have validation coverage. The CDK project has separate assertion tests.
 A connector-only production installation excludes the runtime-definition package.
-The updated connector imported a CDK-deployed runtime and passed fresh cloud model/activity/attachment tests.
-Both shared-image examples later passed cloud model/attachment tests on disposable runtimes. The evidence below describes earlier revisions.
+Earlier connector revisions imported CDK outputs and passed cloud model/activity/attachment tests.
+Both shared-image examples also passed cloud model/attachment tests on disposable runtimes. The evidence below describes those earlier revisions.
 
 The earlier layout review passed all nine targeted plugin/manifest tests and package checks.
 The later refactor passed 170 offline Python tests, including the isolated manifest test.

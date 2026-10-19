@@ -24,9 +24,9 @@ jobs:
         with:
           node-version: "22"
       - run: uv sync --frozen
-      - run: npm ci --prefix src/agentcore_runtime
-      - run: npm run check --prefix src/agentcore_runtime
-      - run: npm test --prefix src/agentcore_runtime
+      - run: npm ci --prefix src/agentcore_runtime/cdk
+      - run: npm run check --prefix src/agentcore_runtime/cdk
+      - run: npm test --prefix src/agentcore_runtime/cdk
       - run: uv run ruff check src
       - run: uv run ruff format --check src
       - run: uv run pytest

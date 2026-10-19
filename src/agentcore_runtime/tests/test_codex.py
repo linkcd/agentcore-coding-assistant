@@ -3,29 +3,58 @@
 import os
 import subprocess
 import sys
+import tomllib
+from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
 
-from agentcore_runtime.codex.image import assistant
-from agentcore_runtime.common import runtime
+from agentcore_runtime.agent_images.codex import assistant
+from agentcore_runtime.agent_images.common import runtime
+
+
+def test_native_sandbox_profile_keeps_workspace_writes_without_full_root_access():
+    path = Path(__file__).resolve().parents[1] / "agent_images/codex/codex-config.toml"
+    config = tomllib.loads(path.read_text())
+    assert config["default_permissions"] == "agentcore-workspace"
+    profile = config["permissions"]["agentcore-workspace"]
+    filesystem = profile["filesystem"]
+    assert filesystem[":minimal"] == "read"
+    assert ":root" not in filesystem and "/" not in filesystem
+    assert filesystem[":workspace_roots"]["."] == "write"
+    for metadata in (".git", ".agents", ".codex", ".aws"):
+        assert filesystem[":workspace_roots"][metadata] == "read"
+    assert "network" not in profile
+    assert "approval_policy" not in config
 
 
 def test_codex_only_inherits_nonsecret_runtime_settings():
     env = assistant.launch_environment(
         {},
-        b"AWS_REGION=us-west-2\0BEDROCK_INFERENCE_REGION=us-east-2\0BEDROCK_MODEL_ID=openai.gpt-5.5\0AWS_SECRET_ACCESS_KEY=synthetic\0",
+        b"AWS_REGION=us-west-2\0BEDROCK_INFERENCE_REGION=us-east-2\0BEDROCK_MODEL_ID=openai.gpt-5.5\0"
+        b"BEDROCK_ENDPOINT_TYPE=mantle\0AWS_SECRET_ACCESS_KEY=synthetic\0",
     )
     assert env["BEDROCK_INFERENCE_REGION"] == "us-east-2"
+    assert env["BEDROCK_ENDPOINT_TYPE"] == "mantle"
     assert "AWS_SECRET_ACCESS_KEY" not in env
 
 
-def test_codex_launch_preserves_user_config_and_native_arguments(monkeypatch, tmp_path):
+@pytest.mark.parametrize(
+    "endpoint_type,provider,model",
+    [
+        ("runtime", "amazon-bedrock-runtime", "global.openai.gpt-5.6-sol"),
+        ("mantle", "amazon-bedrock", "openai.gpt-5.6-sol"),
+    ],
+)
+def test_codex_launch_preserves_user_config_and_native_arguments(
+    monkeypatch, tmp_path, endpoint_type, provider, model
+):
     config = tmp_path / "config.toml"
     config.write_text('approval_policy = "on-request"')
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("BEDROCK_INFERENCE_REGION", "us-east-2")
-    monkeypatch.setenv("BEDROCK_MODEL_ID", "openai.gpt-5.5")
+    monkeypatch.setenv("BEDROCK_MODEL_ID", model)
+    monkeypatch.setenv("BEDROCK_ENDPOINT_TYPE", endpoint_type)
     monkeypatch.setattr(sys, "argv", ["launch.py", "--version"])
     execute = Mock()
     monkeypatch.setattr(runtime.os, "execvpe", execute)
@@ -33,7 +62,10 @@ def test_codex_launch_preserves_user_config_and_native_arguments(monkeypatch, tm
     runtime.launch(assistant)
     executable, argv, env = execute.call_args.args
     assert executable == "codex" and argv[-1] == "--version"
-    assert 'model_provider="amazon-bedrock"' in argv
+    assert f'model_provider="{provider}"' in argv
+    assert f'model_providers.{provider}.aws.region="us-east-2"' in argv
+    assert argv[argv.index("--model") + 1] == model
+    assert ('web_search="disabled"' in argv) == (endpoint_type == "runtime")
     assert "--yolo" not in argv
     assert config.read_text() == 'approval_policy = "on-request"'
 
@@ -41,7 +73,9 @@ def test_codex_launch_preserves_user_config_and_native_arguments(monkeypatch, tm
 @pytest.mark.skipif(
     not os.environ.get("CODEX_RUNTIME_TEST_IMAGE"), reason="Opt-in Codex image test"
 )
-def test_codex_image_starts_cli_without_credentials_or_network():
+@pytest.mark.parametrize("endpoint_type", ["runtime", "mantle"])
+def test_codex_image_starts_cli_without_credentials_or_network(endpoint_type):
+    model = "global.openai.gpt-5.6-sol" if endpoint_type == "runtime" else "openai.gpt-5.6-sol"
     result = subprocess.run(
         [
             "docker",
@@ -52,7 +86,9 @@ def test_codex_image_starts_cli_without_credentials_or_network():
             "-e",
             "BEDROCK_INFERENCE_REGION=us-east-2",
             "-e",
-            "BEDROCK_MODEL_ID=openai.gpt-5.5",
+            f"BEDROCK_MODEL_ID={model}",
+            "-e",
+            f"BEDROCK_ENDPOINT_TYPE={endpoint_type}",
             os.environ["CODEX_RUNTIME_TEST_IMAGE"],
             "/app/run.sh",
             "--version",

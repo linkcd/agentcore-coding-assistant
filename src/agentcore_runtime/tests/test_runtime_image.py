@@ -12,12 +12,12 @@ from unittest.mock import Mock
 
 import pytest
 
-from agentcore_runtime.common import runtime
-from agentcore_runtime.common.healthcheck import Handler
-from agentcore_runtime.opencode.image import assistant
+from agentcore_runtime.agent_images.common import runtime
+from agentcore_runtime.agent_images.common.healthcheck import Handler
+from agentcore_runtime.agent_images.opencode import assistant
 
-IMAGE_CONTEXT = Path(__file__).resolve().parents[1] / "opencode" / "image"
-COMMON = Path(__file__).resolve().parents[1] / "common"
+IMAGE_CONTEXT = Path(__file__).resolve().parents[1] / "agent_images/opencode"
+COMMON = Path(__file__).resolve().parents[1] / "agent_images/common"
 
 MODEL = "anthropic.claude-sonnet-4-5-20250929-v1:0"
 
@@ -25,11 +25,13 @@ MODEL = "anthropic.claude-sonnet-4-5-20250929-v1:0"
 def test_shell_receives_deployment_settings_but_not_pid1_credentials():
     container = (
         f"AWS_REGION=us-west-2\0BEDROCK_MODEL_ID={MODEL}\0"
+        "BEDROCK_ENDPOINT_TYPE=runtime\0"
         "AWS_ACCESS_KEY_ID=synthetic\0AWS_SESSION_TOKEN=synthetic\0"
     ).encode()
     env = assistant.launch_environment({"HOME": "/home/agent"}, container)
     assert env["AWS_REGION"] == "us-west-2"
     assert env["BEDROCK_MODEL_ID"] == MODEL
+    assert env["BEDROCK_ENDPOINT_TYPE"] == "runtime"
     assert env["AWS_PROFILE"] == "default"
     assert env["OPENCODE_CONFIG"] == "/app/opencode.json"
     assert env["OPENCODE_DISABLE_AUTOUPDATE"] == "1"
@@ -42,13 +44,70 @@ def test_explicit_runtime_settings_take_precedence():
             "AWS_REGION": "us-east-1",
             "BEDROCK_MODEL_ID": MODEL,
             "OPENCODE_CONFIG": "/custom/config.json",
-            "OPENCODE_WORKDIR": "/work/repository",
+            "BEDROCK_INFERENCE_REGION": "us-west-2",
+            "BEDROCK_ENDPOINT_TYPE": "runtime",
         },
         b"AWS_REGION=us-west-2\0BEDROCK_MODEL_ID=other\0",
     )
     assert env["AWS_REGION"] == "us-east-1"
     assert env["OPENCODE_CONFIG"] == "/custom/config.json"
-    assert env["OPENCODE_WORKDIR"] == "/work/repository"
+    assert env["BEDROCK_INFERENCE_REGION"] == "us-west-2"
+
+
+@pytest.mark.parametrize(
+    "endpoint_type,npm",
+    [
+        ("runtime", "@ai-sdk/amazon-bedrock"),
+        ("mantle", "@ai-sdk/amazon-bedrock/mantle"),
+    ],
+)
+def test_endpoint_selection_retains_other_native_configuration(endpoint_type, npm):
+    original = {
+        "permission": {"edit": "ask"},
+        "provider": {
+            "amazon-bedrock": {
+                "options": {"region": "us-east-2"},
+                "models": {MODEL: {"name": "Custom model", "provider": {"npm": "old-provider"}}},
+            }
+        },
+    }
+    settings = ("OPENCODE_CONFIG_CONTENT=" + json.dumps(original) + "\0").encode()
+    env = assistant.launch_environment(
+        {
+            "AWS_REGION": "eu-west-1",
+            "BEDROCK_MODEL_ID": MODEL,
+            "BEDROCK_ENDPOINT_TYPE": endpoint_type,
+        },
+        settings,
+    )
+    expected = json.loads(json.dumps(original))
+    expected["provider"]["amazon-bedrock"]["models"][MODEL]["provider"]["npm"] = npm
+    assert json.loads(env["OPENCODE_CONFIG_CONTENT"]) == expected
+    current = {**env, "OPENCODE_CONFIG_CONTENT": '{"model":"user-choice"}'}
+    resolved = json.loads(
+        assistant.launch_environment(current, settings)["OPENCODE_CONFIG_CONTENT"]
+    )
+    assert resolved["model"] == "user-choice"
+    assert "permission" not in resolved
+    assert resolved["provider"]["amazon-bedrock"]["models"][MODEL]["provider"]["npm"] == npm
+    assert current["OPENCODE_CONFIG_CONTENT"] == '{"model":"user-choice"}'
+
+
+@pytest.mark.parametrize(
+    "config",
+    ["not-json", "[]", '{"provider":null}', '{"provider":{"amazon-bedrock":{"models":[]}}}'],
+)
+def test_invalid_native_configuration_fails_before_launch(config):
+    with pytest.raises(ValueError, match="OPENCODE_CONFIG_CONTENT"):
+        assistant.launch_environment(
+            {
+                "AWS_REGION": "eu-west-1",
+                "BEDROCK_MODEL_ID": MODEL,
+                "BEDROCK_ENDPOINT_TYPE": "runtime",
+                "OPENCODE_CONFIG_CONTENT": config,
+            },
+            b"",
+        )
 
 
 def test_missing_runtime_settings_fail_before_launch():
@@ -64,7 +123,8 @@ def test_launch_forwards_session_argv_and_preserves_user_configuration(monkeypat
     monkeypatch.setenv("OPENCODE_CONFIG", str(config))
     monkeypatch.setenv("AWS_REGION", "us-west-2")
     monkeypatch.setenv("BEDROCK_MODEL_ID", MODEL)
-    monkeypatch.delenv("OPENCODE_WORKDIR", raising=False)
+    monkeypatch.setenv("BEDROCK_ENDPOINT_TYPE", "runtime")
+    monkeypatch.delenv("AGENTCORE_WORKDIR", raising=False)
     monkeypatch.setattr(sys, "argv", ["launch.py", "--session", "saved-conversation"])
     chdir, execute = Mock(), Mock()
     monkeypatch.setattr(runtime.os, "chdir", chdir)
@@ -126,7 +186,17 @@ def test_packaged_runtime_configuration_matches_pinned_opencode():
 
 
 @pytest.mark.skipif(not os.environ.get("HERDR_RUNTIME_TEST_IMAGE"), reason="Opt-in Docker test")
-def test_built_image_resolves_opencode_configuration_without_credentials():
+@pytest.mark.parametrize("inference_region", ["us-west-2", "us-east-2"])
+@pytest.mark.parametrize(
+    "endpoint_type,npm,model",
+    [
+        ("runtime", "@ai-sdk/amazon-bedrock", MODEL),
+        ("mantle", "@ai-sdk/amazon-bedrock/mantle", "openai.gpt-5.5"),
+    ],
+)
+def test_built_image_resolves_opencode_configuration_without_credentials(
+    inference_region, endpoint_type, npm, model
+):
     result = subprocess.run(
         [
             "docker",
@@ -137,7 +207,11 @@ def test_built_image_resolves_opencode_configuration_without_credentials():
             "-e",
             "AWS_REGION=us-west-2",
             "-e",
-            f"BEDROCK_MODEL_ID={MODEL}",
+            f"BEDROCK_INFERENCE_REGION={inference_region}",
+            "-e",
+            f"BEDROCK_MODEL_ID={model}",
+            "-e",
+            f"BEDROCK_ENDPOINT_TYPE={endpoint_type}",
             "-e",
             "OPENCODE_DISABLE_MODELS_FETCH=1",
             "-e",
@@ -153,8 +227,9 @@ def test_built_image_resolves_opencode_configuration_without_credentials():
         timeout=60,
     )
     config = json.loads(result.stdout)
-    assert config["model"] == "amazon-bedrock/" + MODEL
-    assert config["provider"]["amazon-bedrock"]["options"]["region"] == "us-west-2"
+    assert config["model"] == "amazon-bedrock/" + model
+    assert config["provider"]["amazon-bedrock"]["options"]["region"] == inference_region
+    assert config["provider"]["amazon-bedrock"]["models"][model]["provider"]["npm"] == npm
     assert "file:///app/activity-plugin.mjs" in config["plugin"]
 
 
@@ -175,6 +250,8 @@ def test_real_opencode_drives_runtime_health():
             "-e",
             f"BEDROCK_MODEL_ID={MODEL}",
             "-e",
+            "BEDROCK_ENDPOINT_TYPE=runtime",
+            "-e",
             "OPENCODE_DISABLE_MODELS_FETCH=1",
             "-e",
             "OPENCODE_DISABLE_DEFAULT_PLUGINS=1",
@@ -187,3 +264,48 @@ def test_real_opencode_drives_runtime_health():
         timeout=120,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.skipif(not os.environ.get("HERDR_RUNTIME_TEST_IMAGE"), reason="Opt-in Docker test")
+@pytest.mark.parametrize(
+    "name", ["opencode-agentcore-profile-2", "opencode-s3filesystem-agentcore-profile-3", "mantle"]
+)
+def test_project_model_is_registered_in_pinned_opencode(name):
+    if name == "mantle":
+        profile = {
+            "region": "us-east-2",
+            "inference": {"bedrock-endpoint-type": "mantle", "modelId": "openai.gpt-5.5"},
+        }
+    else:
+        profile_path = Path(__file__).resolve().parents[1] / "provision_profiles" / f"{name}.json"
+        profile = json.loads(profile_path.read_text())
+    env = {
+        "AWS_REGION": profile["region"],
+        "BEDROCK_INFERENCE_REGION": profile["inference"].get("region", profile["region"]),
+        "BEDROCK_MODEL_ID": profile["inference"]["modelId"],
+        "BEDROCK_ENDPOINT_TYPE": profile["inference"]["bedrock-endpoint-type"],
+        "OPENCODE_DISABLE_MODELS_FETCH": "1",
+        "AWS_EC2_METADATA_DISABLED": "true",
+    }
+    command = ["docker", "run", "--rm", "--network", "none"]
+    for key, value in env.items():
+        command.extend(["-e", f"{key}={value}"])
+    command.extend(
+        [
+            os.environ["HERDR_RUNTIME_TEST_IMAGE"],
+            "/app/run.sh",
+            "models",
+            "amazon-bedrock",
+            "--verbose",
+        ]
+    )
+    result = subprocess.run(command, capture_output=True, text=True, timeout=90)
+    assert result.returncode == 0, result.stderr
+    header = "amazon-bedrock/" + profile["inference"]["modelId"] + "\n"
+    assert header in result.stdout
+    model, _ = json.JSONDecoder().raw_decode(result.stdout.split(header, 1)[1].lstrip())
+    if name == "mantle":
+        assert model["api"]["npm"] == "@ai-sdk/amazon-bedrock/mantle"
+    else:
+        assert model["api"]["npm"] == "@ai-sdk/amazon-bedrock"
+        assert model["limit"] == {"context": 1000000, "output": 8192}

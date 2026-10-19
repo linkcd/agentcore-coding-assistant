@@ -10,8 +10,8 @@ from pathlib import Path
 
 import pytest
 
-from agentcore_runtime.common import healthcheck
-from agentcore_runtime.common.activity import LEASE_SECONDS, health_status
+from agentcore_runtime.agent_images.common import healthcheck
+from agentcore_runtime.agent_images.common.activity import LEASE_SECONDS, health_status
 
 
 @pytest.fixture

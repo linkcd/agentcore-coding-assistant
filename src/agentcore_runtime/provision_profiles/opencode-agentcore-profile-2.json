@@ -1,0 +1,14 @@
+{
+  "stackName": "HerdrOpenCodeRuntime",
+  "runtimeName": "opencode_agentcore_runtime_2",
+  "region": "eu-west-1",
+  "image": "opencode",
+  "inference": {
+    "bedrock-endpoint-type": "runtime",
+    "modelId": "global.moonshotai.kimi-k3"
+  },
+  "lifecycle": {
+    "idleRuntimeSessionTimeout": 900,
+    "maxLifetime": 28800
+  }
+}

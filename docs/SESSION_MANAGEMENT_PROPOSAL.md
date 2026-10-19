@@ -6,12 +6,15 @@
 
 **Discussion date:** 2026-10-17.
 
+**Implementation evidence updated:** 2026-10-19. The proposed recovery design remains a discussion draft.
+
 **Scope:** Hosting, execution identity, persistent state, and recovery.
 
 **Related:** [Design](DESIGN.md), [requirements](REQUIREMENTS.md), and [glossary](DESIGN.md#glossary).
 
-Examples use placeholders. Actual profiles and execution records remain outside the repository.
-Storage and recovery details still need decisions and validation.
+The filesystem provision profile uses env references resolved from ignored `src/agentcore_runtime/.env`. The PUBLIC profiles need no `.env` bindings.
+Generated outputs use ignored `.local/deployments/`. Herdr manages execution records separately.
+S3 Files mount and cross-session file tests passed. Per-binding storage, persistent home, and conversation recovery still need implementation and validation.
 
 ## 1. Recommendation
 
@@ -51,7 +54,8 @@ EC2 management host
 AgentCore Runtime
   OpenCode workers and tools
   Execution role -> Bedrock
-  S3 Files -> persistent workspaces/checkpoints (planned)
+  S3 Files -> mounted coding files (implemented)
+           -> per-binding paths and checkpoints (planned)
 ```
 
 A coordinator left on the laptop still pauses when the laptop sleeps.
@@ -78,7 +82,8 @@ Remove conflicting static credentials, stale SSO selections, and metadata-disabl
 Do not export a one-time credential snapshot at daemon startup.
 
 Plugin `--profile` selects a runtime configuration, not an AWS identity.
-The owned image's `AWS_PROFILE=default` selects the Node provider inside AgentCore.
+The OpenCode image's `AWS_PROFILE=default` selects the Node provider inside AgentCore.
+Codex uses its native AWS credential chain. Neither adapter exports a credential snapshot.
 It does not instruct the EC2 manager to use a named host profile.
 
 The connector does not require static SSH keys, IAM user keys, custom API keys, or laptop credential forwarding.
@@ -88,9 +93,9 @@ Relevant code:
 
 - [AWS adapter](../src/herdr_plugin/herdr_agentcore/agentcore.py): credential resolution and signing.
 - [Profile model](../src/herdr_plugin/herdr_agentcore/models.py): host credential selection and runtime target.
-- [Shared worker launcher](../src/agentcore_runtime/common/runtime.py): environment inheritance, working directory, and process startup.
-- [OpenCode adapter](../src/agentcore_runtime/opencode/image/assistant.py): execution-role provider selection.
-- [CDK stack](../src/agentcore_runtime/runtime-stack.ts): execution-role permissions and runtime resources.
+- [Shared worker launcher](../src/agentcore_runtime/agent_images/common/runtime.py): environment inheritance, mount readiness, working directory, and process startup.
+- [OpenCode adapter](../src/agentcore_runtime/agent_images/opencode/assistant.py): execution-role provider selection.
+- [CDK stack](../src/agentcore_runtime/cdk/runtime-stack.ts): execution-role permissions and runtime resources.
 - [Connection contract](../src/runtime_contract/README.md): versioned data between runtime publishers and connectors.
 
 Code compatibility is established. EC2 instance-role/SSM deployment validation remains pending.
@@ -118,7 +123,7 @@ Keep SSM timeout, SSO expiry, connector reconnect, and AgentCore lifecycle limit
 An always-on EC2 host does not extend worker compute lifetime.
 
 Validate rendering, shortcuts, paste, resize, viewer timeout/disconnect, instance-role refresh, and manager restart.
-The current provisioner deploys AgentCore, not EC2, its service manager, or SSM configuration.
+The current CDK project deploys AgentCore, not EC2, its service manager, or SSM configuration.
 
 ## 2. Current implementation versus proposed behavior
 
@@ -127,8 +132,8 @@ The current provisioner deploys AgentCore, not EC2, its service manager, or SSM 
 | IDs | Saved connection, runtime-session, and shell UUIDs with a profile snapshot. | Retain binding identity and record execution generations. |
 | Names | Herdr live aliases belong to the current pane occupant. | Persist desired names and restore them on recovery. |
 | Attach | Reuse the original live PTY. | Keep this path and add confirmed replacement recovery. |
-| Worker state | Ephemeral files and OpenCode data. | Persistent workspace and consistent checkpoints. |
-| Lifecycle | 15-minute idle timeout and 8-hour microVM maximum. Earlier activity health is deployed. | Make termination recoverable through checkpoints. |
+| Worker state | PUBLIC profiles have ephemeral files. The filesystem profile mounts shared coding files at `/mnt/workspace`; home and conversation data remain ephemeral. | Per-binding workspace paths, persistent configuration/skills, and consistent checkpoints. |
+| Lifecycle | 15-minute idle timeout and 8-hour microVM maximum. OpenCode has activity health; Codex has readiness health only. | Make termination recoverable through checkpoints. |
 | Management | Host-local records. No deployed EC2 manager. | EC2 coordinator, retained state, and host reconciliation. |
 | Authentication | Boto3 and SigV4 WebSockets. | Use the same code with an EC2 instance role. |
 
@@ -136,10 +141,15 @@ An earlier deployed refactor added validated records, classified errors, nonbloc
 Its cloud activity and Herdr model/attachment probes passed.
 The source split separates runtime infrastructure, the connector, and their contract.
 Both shared-image examples passed short cloud model/attachment probes on disposable CDK deployments. OpenCode also passed activity-health checks.
-Codex work-health, sandbox/tool execution, and long-duration behavior remain unqualified.
-Runtime infrastructure now uses official AWS CDK. Named settings such as `opencode` and `codex` select configuration, not hardcoded assistant types.
+Later Codex tests passed a sandboxed `date` tool call and scoped isolation checks, including an interactive tool call after Herdr attachment.
+Codex work-health, broader tool/approval cases, and long-duration behavior remain unqualified.
+Runtime infrastructure uses official AWS CDK under `cdk/`. Named provision profiles select configuration, not hardcoded assistant types.
 The saved `runtime_profile` reference is separate from the local Herdr connection profile and its recognition hint.
-Storage and automatic recovery remain unimplemented.
+All three numbered profiles passed CDK deploy with no changes on 2026-10-19. Runtime/DEFAULT versions were 4 for Codex and 1 for both OpenCode profiles; all were READY.
+Two sessions per profile passed model-driven date commands and read-only folder checks. The six user-requested sessions were left open after verification.
+The filesystem profile passed mounted startup and matching 4 KiB/8 MiB writes and reads across separate sessions.
+The separate storage probe removed its files and requested stop for its sessions. Conversation checkpoints, per-binding namespaces, and automatic recovery remain pending.
+See the [latest verification](../src/agentcore_runtime/README.md#all-profiles-and-six-interactive-sessions--2026-10-19) for the complete evidence.
 `HealthyBusy` reports active work; it cannot preserve files or extend the maximum lifetime.
 
 ## 3. Identity model: what maps to what?
@@ -168,7 +178,7 @@ Herdr live name: cloud-1
   -> metadata: connection=<short UUID>
   -> full connection record
        id: <connection-uuid-A>
-       name: opencode-agentcore-runtime-<short-id>
+        name: <connection-profile-name>-<short-id>
        profile.runtime_arn: <runtime-arn>
        profile.endpoint: <endpoint>
        runtime_session_id: <runtime-session-uuid-A>
@@ -295,7 +305,7 @@ AWS documents NFSv4.2, close-to-open consistency, and no hard-link support.
 Validate Git, dependency managers, rename/flush, and concurrency before relying on them.
 Use the mounted filesystem for work; avoid simultaneous direct edits to backing S3 objects.
 
-The current runtime uses public networking.
+The Codex and plain OpenCode profiles use PUBLIC networking. The filesystem profile already uses VPC networking and an existing S3 Files access point.
 S3 Files needs VPC connectivity, mount targets, mount/write permissions, and the appropriate UID/GID.
 Shared-access-point directories organize work; they are not independent IAM security boundaries.
 
@@ -392,7 +402,7 @@ Do not start two active controllers by copying records alone.
 
 1. **EC2 baseline:** deploy one supervised manager, instance role, retained state, and selected access method. Place coordination there and test viewer independence.
 2. **Identity/schema:** define binding additions, name conflicts, namespaces, manifests, and record migration.
-3. **Storage:** integrate S3 Files and test mounts, tools, skill discovery, and survival across compute/image replacement.
+3. **Storage:** extend the verified S3 Files mount with per-binding paths and persistent configuration. Test coding tools, skill discovery, and survival across compute/image replacement.
 4. **Checkpoints:** capture conversation identity and publish consistent versioned backups with measurable recovery points.
 5. **Resume:** implement exclusive ownership, confirmed replacement, restore, new shell creation, and Herdr rebinding.
 6. **Failures:** test crashes, expiry, unanswered questions, manager restarts, competing recovery, and uncertain tools.

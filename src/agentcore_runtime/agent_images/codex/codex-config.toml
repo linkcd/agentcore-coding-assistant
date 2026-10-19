@@ -1,0 +1,18 @@
+# AgentCore exposes containerd rootfs aliases. Bind explicit readable roots
+# instead of the entire runtime root, while retaining Codex's sandbox.
+default_permissions = "agentcore-workspace"
+
+[permissions.agentcore-workspace.filesystem]
+":minimal" = "read"
+":slash_tmp" = "write"
+":tmpdir" = "write"
+
+[permissions.agentcore-workspace.filesystem.":workspace_roots"]
+"." = "write"
+".git" = "read"
+".agents" = "read"
+".codex" = "read"
+".aws" = "read"
+
+# Network remains restricted by the named profile's default. Approval policy
+# is not overridden. Users can request additional access through normal review.

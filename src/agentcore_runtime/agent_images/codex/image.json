@@ -1,0 +1,10 @@
+{
+  "file": "common/Dockerfile",
+  "buildArgs": {
+    "NPM_PACKAGE": "@openai/codex",
+    "NPM_VERSION": "0.163.0",
+    "EXECUTABLE": "codex"
+  },
+  "command": ["/app/run.sh"],
+  "agentKind": "codex"
+}

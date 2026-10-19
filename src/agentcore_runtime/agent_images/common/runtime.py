@@ -23,9 +23,15 @@ def launch(adapter):
     except OSError:
         container = b""
     try:
-        env = adapter.launch_environment(dict(os.environ), container)
+        current = inherit_settings(
+            dict(os.environ), container, ("AGENTCORE_REQUIRED_MOUNT", "AGENTCORE_WORKDIR")
+        )
+        env = adapter.launch_environment(current, container)
+        required_mount = env.get("AGENTCORE_REQUIRED_MOUNT")
+        if required_mount and not Path(required_mount).is_mount():
+            raise ValueError("The configured runtime filesystem is not mounted.")
         argv = adapter.launch_arguments(env, sys.argv[1:])
-        os.chdir(env.get(adapter.WORKDIR_SETTING) or env.get("HOME", "/home/agent"))
+        os.chdir(env.get("AGENTCORE_WORKDIR") or env.get("HOME", "/home/agent"))
         os.execvpe(argv[0], argv, env)
     except (ValueError, OSError) as exc:
         print(f"Runtime startup: {exc}", file=sys.stderr)

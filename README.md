@@ -26,7 +26,19 @@ The CDK project and connector use the shared contract. Neither imports the other
 Each folder has its own README and tests. The connector and contract are Python packages; infrastructure uses npm/CDK.
 The root is a Python workspace for those two packages. The Herdr manifest remains at the root.
 
-`opencode` and `codex` are named example settings under the runtime project's `profiles/` directory.
+Agent image sources live in `src/agentcore_runtime/agent_images/`.
+Deployment inputs live in `provision_profiles/`; CDK code and npm configuration live in `cdk/`.
+The three provision profiles are:
+
+| Profile | Startup model | Network |
+| --- | --- | --- |
+| `codex-agentcore-profile-1` | GPT-5.6 Sol through Codex | PUBLIC |
+| `opencode-agentcore-profile-2` | Kimi K3 through OpenCode | PUBLIC |
+| `opencode-s3filesystem-agentcore-profile-3` | Kimi K3 through OpenCode | VPC and S3 Files |
+
+Each profile references one shared image definition rather than repeating build and startup settings.
+Deployment bindings are read from ignored `src/agentcore_runtime/.env`; the adjacent `.sample.env` is the tracked template.
+See the [AgentCore Runtime README](src/agentcore_runtime/README.md#step-3-select-a-sample-profile) for all three samples, their setup, and deployment commands.
 These names point to configuration; they are not hardcoded assistant types in the connector.
 Add other profiles without changing terminal transport. A profile's Herdr recognition hint can differ from its name.
 The examples share image build, startup, and health code. Their adapters and genuine capability differences are described in the [runtime comparison](src/agentcore_runtime/README.md#opencode-and-codex-comparison).
@@ -53,19 +65,20 @@ For prerequisites, registration, verification, and troubleshooting, follow the [
    herdr plugin link "$PWD"
    ```
 
-3. Import the runtime owner's descriptor:
+3. Import the current OpenCode deployment outputs:
 
    ```bash
    .venv/bin/herdr-agentcore configure \
-     --connection-file "$HOME/.config/agentcore/opencode.connection.json" \
-     --profile opencode-agentcore-runtime \
+     --cdk-outputs .local/deployments/opencode-agentcore-profile-2.json \
+     --stack HerdrOpenCodeRuntime \
+     --profile opencode-agentcore-profile-2 \
      --config-dir "$(herdr plugin config-dir agentcore)"
    ```
 
 4. Select it as the default:
 
    ```bash
-   .venv/bin/herdr-agentcore set-default opencode-agentcore-runtime \
+   .venv/bin/herdr-agentcore set-default opencode-agentcore-profile-2 \
      --config-dir "$(herdr plugin config-dir agentcore)"
    ```
 
@@ -75,12 +88,15 @@ For prerequisites, registration, verification, and troubleshooting, follow the [
    herdr plugin action invoke agentcore.new
    ```
 
+If a runtime owner supplies a standalone descriptor, use `--connection-file PATH` instead of `--cdk-outputs` and `--stack`.
+CDK writes its standard outputs document; it does not create a separate `.connection.json` file.
 You can also configure an ARN directly:
 
 ```bash
 .venv/bin/herdr-agentcore configure \
   --runtime-arn "$RUNTIME_ARN" --agent-kind opencode \
-  --profile opencode-agentcore-runtime \
+  --runtime-profile opencode-agentcore-profile-2 \
+  --profile opencode-agentcore-profile-2 \
   --config-dir "$(herdr plugin config-dir agentcore)" \
   --command /app/run.sh
 ```
@@ -97,16 +113,22 @@ The runtime component contains CDK constructs, named settings, and Docker contex
 AWS CDK builds/publishes assets and deploys CloudFormation. The stack exports a connection descriptor without writing Herdr configuration.
 
 ```bash
-npm ci --prefix src/agentcore_runtime
-npm --prefix src/agentcore_runtime run cdk -- deploy HerdrOpenCodeRuntime \
-  -c runtimeProfile=opencode -c region=eu-west-1 \
-  --outputs-file "$HOME/.config/agentcore/cdk-outputs-opencode.json"
+npm ci --prefix src/agentcore_runtime/cdk
+npm --prefix src/agentcore_runtime/cdk run cdk -- synth \
+  -c runtimeProfile=opencode-agentcore-profile-2
 ```
 
 This command needs a local Docker engine, Buildx/ARM64 support, and AWS deployment permissions.
 Use `cdk synth` to inspect templates and `cdk diff` to review changes before deployment.
-The target account/region needs CDK bootstrap resources. Follow the [runtime README](src/agentcore_runtime/README.md) for the full OpenCode and Codex procedures.
-Import the output with `herdr-agentcore configure --cdk-outputs PATH --stack HerdrOpenCodeRuntime` plus the local profile/config options.
+The target account/region needs CDK bootstrap resources. Follow the [runtime README](src/agentcore_runtime/README.md) to fill resource bindings, review, deploy, and register each project.
+All Runtime regions are `eu-west-1`. Only the filesystem example needs `src/agentcore_runtime/.env` for subnet, security-group, and access-point bindings.
+CDK resolves the account through the authenticated Toolkit. The filesystem sample uses access-point permissions without a bucket/prefix input or metadata lookup.
+The selected profile and component `.env` control deployment settings. Per-field CDK context overrides and ambient shell binding overrides are rejected or ignored, respectively.
+For the S3 example, copy `src/agentcore_runtime/.sample.env` to `src/agentcore_runtime/.env` if needed and fill its bindings. External profile directories are not supported.
+All three samples use `inference.bedrock-endpoint-type: "runtime"`.
+CDK uses this field for inference IAM and native client selection. Both startup models use global cross-Region inference from Ireland.
+Earlier Sol requests were rejected by zero-retention policy. The user later authorized an Ireland-only guard exception and set Runtime retention there to `default`. Profile deployment itself does not change retention settings.
+Import each stack's output with `herdr-agentcore configure --cdk-outputs PATH --stack STACK_NAME` plus local connection options.
 
 ## Select, attach, detach, and stop
 
@@ -114,6 +136,8 @@ New-agent selection uses explicit `--profile`, then `HERDR_AGENTCORE_PROFILE`, t
 The first saved profile becomes default. Later saves preserve it.
 Invalid or ambiguous selection fails without a picker.
 Existing connections retain their target and launch settings.
+Importing the numbered profiles does not retarget an older saved default or existing connection records.
+Use an explicit profile for launch, or select a verified current default with `set-default`.
 
 | Command | Purpose |
 | --- | --- |
@@ -134,8 +158,8 @@ Every connection must contain explicit launch argv. Missing `command` fails vali
 The connector does not supply `/app/run.sh` or infer OpenCode from the command or ARN.
 Missing `agent_kind` selects an ordinary terminal.
 
-The supplied `opencode` profile declares `["/app/run.sh"]` as its current command.
-CDK accepts a replacement through `-c 'command=["/custom/start"]'`.
+The selected image definitions declare `["/app/run.sh"]` as their current command. A provision profile can override it explicitly.
+Set `command: ["/custom/start"]` in the selected provision profile to replace the image's default argv.
 The connector can also override a valid descriptor's command explicitly.
 See [command selection](src/agentcore_runtime/README.md#launch-command-selection) for examples and limits.
 
@@ -145,20 +169,24 @@ See the [contract README](src/runtime_contract/README.md) for fields and version
 
 ## Status and limits
 
-Version `0.1.0` is experimental.
-The selected `opencode` settings were deployed through AWS CDK. The runtime and default endpoint reached READY.
-The updated connector imported CDK outputs and passed fresh cloud model, activity, attachment, and conversation-continuity tests.
-The previous custom-provisioned runtime and its owned stacks were removed. Its ECR images remain under their retention policy.
-Both shared-image examples passed cloud E2E tests on disposable runtimes: real model calls, Herdr recognition, detach/attachment, conversation continuity, and stop requests.
-OpenCode also passed cloud work/question/reply health tests. Codex still has no runtime work-event reporter, and sandbox/tool execution remains unverified.
-The temporary stacks were removed. These tests did not replace the existing default deployment.
-After that qualification, both shared-image profiles were deployed as persistent CDK stacks and passed fresh E2E checks.
-Herdr uses the committed connector with `opencode-agentcore-runtime` and `codex-agentcore-runtime`; OpenCode remains the default.
-Earlier cloud tests used Herdr 0.9.5, OpenCode 1.18.30, and AgentCore SDK 1.24.1.
-They verified deployment/update, role-based Bedrock calls, default selection, attachment, conversation continuity, and activity health.
+The latest verification was on 2026-10-19.
+The three numbered profiles were deployed in `eu-west-1` and READY. Codex Runtime/DEFAULT was version 4; both OpenCode runtimes were version 1.
+These are AWS runtime versions, not assistant package or descriptor versions.
+Codex with GPT-5.6 Sol passed native Bedrock Runtime inference, sandbox checks, attachment, a context-preserving follow-up, and a real shell-tool call. Ireland Runtime retention is `default`.
+Both OpenCode profiles passed real Kimi model calls.
+The filesystem permission issue is fixed using AWS's documented directory-marker metadata procedure. Separate sessions wrote and read 4 KiB and 8 MiB files successfully.
+All three profiles passed a later CDK deploy check with no changes. Two fresh interactive sessions per profile passed real date and folder-access checks.
+See the [latest all-profile verification](src/agentcore_runtime/README.md#all-profiles-and-six-interactive-sessions--2026-10-19) and [Codex deployment results](src/agentcore_runtime/README.md#sol-on-native-bedrock-runtime--2026-10-19) for details.
 
-The current OpenCode definition uses ephemeral coding state, a 900-second idle timeout, and a 28,800-second compute maximum.
-Real work produces `HealthyBusy`. An unanswered question can be idle when no other tracked work runs.
+Version `0.1.0` is experimental. Images pin OpenCode 1.18.30 and Codex 0.163.0; the connector pins AgentCore SDK 1.24.1.
+Herdr 0.9.5 validated all three profiles. Their descriptors were imported under their numbered profile names.
+Six user-requested sessions were left open after the latest checks. They remain subject to the runtime lifecycle limits; discover live state before further operations.
+The older custom-managed and pre-numbered deployments were retired. Their output files and test results are historical records.
+
+All profiles use a 900-second idle timeout and a 28,800-second compute maximum.
+The PUBLIC profiles use ephemeral coding files. The filesystem profile mounts shared coding files at `/mnt/workspace`; its home and conversation state remain ephemeral.
+OpenCode's tracked work produces `HealthyBusy`. An unanswered question can be idle when no other tracked work runs.
+Earlier cloud activity tests and current local image tests cover that bridge. Codex has readiness health only; its work-event reporter is not implemented.
 Health reporting does not extend the maximum lifetime or preserve files.
 Full-duration expiry and credential-rollover tests remain pending.
 
@@ -166,7 +194,9 @@ OpenCode 1.18.30/Bun 1.3.14 crashed at 35×20 in a controlled probe.
 Larger/zoomed panes are a workaround; the complete safe-size boundary is unknown.
 Ctrl+Z can suspend OpenCode. A live connector and screen-derived idle badge do not prove process health.
 
-S3 Files persistence, automatic resume, multiple helper shells, EC2 management deployment, and host recovery remain planned.
+S3 Files mount readiness, the mounted working directory, and cross-session file persistence passed on the filesystem profile.
+Per-binding storage paths, persistent home/configuration, skill discovery, and conversation checkpoints remain planned or unqualified.
+Automatic resume, multiple helper shells, EC2 management deployment, and host recovery remain planned.
 The hosting target is **EC2 management/coordination → AgentCore workers**, with the laptop used for access and viewing.
 Standard SSM access and native Herdr SSH access are separate options. Neither changes connector authentication.
 
@@ -180,7 +210,7 @@ Standard SSM access and native Herdr SSH access are separate options. Neither ch
 - [Agent instructions](agent.md): repository conventions and ASD-STE100-style writing rules.
 
 All project documentation follows those style rules. Legal notices retain their original wording.
-Keep credentials, actual deployment identifiers, populated descriptors, records, and transcripts outside the repository.
+Keep credentials, records, and transcripts out of Git. Keep local deployment bindings in ignored `src/agentcore_runtime/.env` and generated descriptors under ignored `.local/`.
 
 ```bash
 uv sync --frozen
@@ -189,8 +219,9 @@ uv run --frozen ruff format --check src
 uv run --frozen pytest -q --tb=short
 uv run --frozen python src/herdr_plugin/tests/repository_privacy.py
 uv build --all-packages
-npm run check --prefix src/agentcore_runtime
-npm test --prefix src/agentcore_runtime
+uv run --frozen python src/runtime_contract/tests/check_distributions.py --dist dist
+npm run check --prefix src/agentcore_runtime/cdk
+npm test --prefix src/agentcore_runtime/cdk
 ```
 
 Default tests make no AWS calls. Live probes require a selected runtime and authorization.
