@@ -264,11 +264,11 @@ The local `stopped` label means the API accepted the request; there is no stop-c
 
 ### Verified current examples — 2026-10-19
 
-All three numbered deployments and their `DEFAULT` endpoints were READY. Codex was runtime version 4; both OpenCode deployments were version 1.
-Two independent sessions per profile opened in three Herdr tabs. All six executed a date command and reported directory access.
+The three model-only profiles were destroyed and redeployed with new runtime ARNs. Every runtime and `DEFAULT` endpoint reached version 1 and READY.
+The numbered saved profiles were replaced from the new CDK outputs. Two independent sessions per profile opened in three replacement Herdr tabs and returned date and folder-access results.
 The filesystem sessions used the shared `/mnt/workspace` mount; the PUBLIC sessions used runtime-local home directories.
 Those six user-requested sessions were left open. The separate disposable verification probes stopped their own sessions.
-See [all-profile verification](../src/agentcore_runtime/README.md#all-profiles-and-six-interactive-sessions--2026-10-19) for storage checks and remaining limits.
+See the [rebuild verification](../src/agentcore_runtime/README.md#model-only-profile-rebuild--2026-10-19) for storage checks and model-history limits.
 
 ### Adaptation cases
 

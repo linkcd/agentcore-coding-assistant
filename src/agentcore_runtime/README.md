@@ -112,9 +112,9 @@ The names below refer to the supplied settings. Other named profiles can reuse e
 | Build and startup | Shared Dockerfile, tools, user, entrypoint, environment inheritance, and error handling. | Same. |
 | Assistant adapter | `agent_images/opencode/assistant.py`. | `agent_images/codex/assistant.py`. |
 | Package/version | `opencode-ai` 1.18.30. | `@openai/codex` 0.163.0. |
-| Inference | Bedrock Runtime by default. The endpoint field selects the startup model's native SDK. | Bedrock Runtime for GPT-5.6 Sol. The endpoint field selects the native Runtime or Mantle provider. |
+| Inference | The selected model's catalog metadata chooses the native endpoint and SDK. An advanced startup override is optional. | The image defaults to native Bedrock Runtime. An optional override selects Mantle. |
 | Model authentication | Refreshable execution-role provider; no exported snapshot. | Native AWS credential chain; no generated bearer-token snapshot. |
-| Model authorization | Sample role allows Bedrock model invocation on all resources; the startup model is not an IAM allowlist. | Same Runtime policy. Mantle selections use regional account-project inference permissions. |
+| Model authorization | Each role allows Runtime invocation on all model resources and Mantle inference on regional account projects. The startup choice is not an IAM allowlist. | Same policy for both endpoints. |
 | Configuration | Additional `opencode.json`; explicit updater suppression. | Native provider arguments and an image-installed permission preset; approval policy is not overridden. |
 | HTTP health and process checks | Shared health server and live/fresh work-lease reader. | Same implementation. |
 | AgentCore work-event source | OpenCode event/tool hooks publish process-bound work leases. | Not implemented. No work lease is produced by this adapter. |
@@ -208,7 +208,8 @@ Do not bootstrap another account or delete a shared bootstrap stack as applicati
 | [opencode-agentcore-profile-2](provision_profiles/opencode-agentcore-profile-2.json) | OpenCode 1.18.30; `global.moonshotai.kimi-k3` | PUBLIC; no VPC or mount | Image home, `/home/agent` |
 | [opencode-s3filesystem-agentcore-profile-3](provision_profiles/opencode-s3filesystem-agentcore-profile-3.json) | Same OpenCode image and Kimi K3 model | VPC with an existing S3 Files access point | Mount root, `/mnt/workspace` |
 
-All three profiles select `"runtime"`. All Runtime and default inference regions are `eu-west-1`.
+The three sample `inference` objects contain only `modelId`. Their models use Runtime through native catalog metadata or the Codex image default.
+All Runtime and default inference regions are `eu-west-1`.
 Both startup models use global cross-Region inference; an Ireland endpoint does not restrict model processing to the EU.
 Each profile creates its own stack, execution role, and Runtime ARN. Sessions are instances of that deployment.
 
@@ -228,7 +229,7 @@ Profile filenames may contain hyphens. AgentCore Runtime names use letters, digi
 | `runtimeName` | Names the AgentCore resource. It has different naming constraints and replacement behavior. |
 | `region` | Selects the Runtime deployment region. CDK resolves the account from deployment credentials/context. |
 | `image` | References one image definition. Package, version, Dockerfile, command, and hint are not copied into every sample. |
-| `inference.bedrock-endpoint-type` | Required. Selects the native client and IAM policy. Accepts only `"runtime"` or `"mantle"`. |
+| `inference.bedrock-endpoint-type` | Optional advanced startup override. Accepts only `"runtime"` or `"mantle"`. Omit it to use native OpenCode catalog routing or Codex's Runtime default. It does not change IAM. |
 | `inference.modelId` | Selects the startup model, not an IAM model allowlist. |
 | `inference.region` | Optional. Defaults to the Runtime region. All three samples omit it. |
 | `lifecycle` | Sets idle timeout and maximum lifetime in seconds. Both values affect the deployed resource. |
@@ -266,37 +267,69 @@ They do not contain customer account IDs, regions, model IDs, or network/storage
 
 ### Bedrock endpoint selection
 
-Use the exact field name and value:
+Normal profiles need only a startup model:
 
 ```json
 {
   "inference": {
-    "bedrock-endpoint-type": "runtime",
     "modelId": "global.openai.gpt-5.6-sol"
   }
 }
 ```
 
-CDK uses this field for two operations. It selects inference permissions and sets the container's `BEDROCK_ENDPOINT_TYPE`.
-The values are project-defined identifiers. The CDK application maps them to IAM and environment settings; they are not a built-in CDK enum.
-The adapters require that value and select the matching native provider:
+OpenCode selects the model's SDK and endpoint from its native catalog or image-defined model metadata.
+The Codex image defaults to the native `amazon-bedrock-runtime` provider.
+CDK omits `BEDROCK_ENDPOINT_TYPE` for these normal profiles. Each execution role permits both Runtime and Mantle calls.
 
-| Value | Codex provider | OpenCode SDK for the startup model | IAM |
-| --- | --- | --- | --- |
-| `"runtime"` | `amazon-bedrock-runtime` | `@ai-sdk/amazon-bedrock` (Converse) | Model invocation, streaming, and inference-profile discovery. |
-| `"mantle"` | `amazon-bedrock` | `@ai-sdk/amazon-bedrock/mantle` | `bedrock-mantle:CreateInference` on regional account projects. |
+If a startup model needs an explicit route, set the optional `inference.bedrock-endpoint-type` override:
 
-Use Bedrock Runtime and Bedrock Mantle as display names. JSON and `BEDROCK_ENDPOINT_TYPE` use lowercase identifiers.
-The parser rejects `inference.api`, `inference.endpoint-type`, missing values, display names, and alternate spellings.
-Do not repeat `BEDROCK_ENDPOINT_TYPE` in profile `environment`; CDK derives it from the endpoint field.
+| Value | Codex provider | OpenCode SDK for the startup model |
+| --- | --- | --- |
+| Omitted | `amazon-bedrock-runtime` | Native model metadata; no SDK override. |
+| `"runtime"` | `amazon-bedrock-runtime` | `@ai-sdk/amazon-bedrock` (Converse) |
+| `"mantle"` | `amazon-bedrock` | `@ai-sdk/amazon-bedrock/mantle` |
+
+Use Bedrock Runtime and Bedrock Mantle as display names. Explicit JSON overrides and `BEDROCK_ENDPOINT_TYPE` use lowercase identifiers.
+The parser rejects `inference.api`, `inference.endpoint-type`, null/empty override values, display names, and alternate spellings. Omission is valid.
+Do not repeat `BEDROCK_ENDPOINT_TYPE` in profile `environment`; CDK exports it only from the optional override.
 For Mantle, choose a Mantle model ID and a supported inference region together. Runtime inference-profile IDs do not select Mantle models.
 Endpoint selection does not translate model IDs or automatically switch endpoints after a failure.
 
-OpenCode adds the selected model's SDK setting to `OPENCODE_CONFIG_CONTENT` and retains the other JSON settings.
+Only an explicit override makes OpenCode add the startup model's SDK setting to `OPENCODE_CONFIG_CONTENT`.
+Without it, the launcher preserves that setting as supplied and does not generate a new overlay. User configuration files are preserved.
 If supplied, this environment setting must contain a JSON object. User configuration files are preserved.
 The pinned Mantle loader uses Responses for normal models. Select a model compatible with that API.
-Later model selections use OpenCode's native catalog; choose models compatible with the deployment's endpoint permissions.
+Later model selections use OpenCode's native catalog. Each entry carries endpoint information, and the role permits both supported routes.
+Codex instead selects an endpoint-specific provider and catalog at startup. IAM permission for both endpoints does not merge its two native providers.
 Codex disables hosted web search for Runtime because that endpoint does not provide the tool.
+
+#### Model switching: endpoint and history limits
+
+OpenCode's Bedrock picker contains entries for both endpoints. Normal profiles let each entry select its own route.
+For example, `GPT-6 Astra (Global)` uses `global.openai.gpt-6-astra` through Runtime.
+The unqualified `GPT-6 Astra` entry uses `openai.gpt-6-astra` through Mantle. Its earlier IAM denial exposed the startup-endpoint restriction in the role policy.
+The shared stack now grants both inference paths to each role. Users can select compatible models without changing IAM for each endpoint.
+A listed model still needs account access, regional availability, and compatible retention and API settings.
+After the policy update, Ireland Mantle returned 404 for `openai.gpt-6-astra`; its regional model list did not include that ID.
+Both OpenCode profiles passed Global Astra through Runtime and `openai.gpt-oss-20b` through Mantle. The startup environment remained Runtime for both calls.
+
+Codex 0.163.0 has a separate history-compatibility issue on Bedrock Runtime.
+It retains encrypted reasoning items when changing models. Replaying a Sol reasoning item to Astra stalled after `response.created`, despite HTTP status 200.
+Replaying the same history to Sol completed. Omitting only the reasoning item from the synthetic cross-model request also completed.
+The native CLI reproduced the stall for Sol tool history resumed with Astra or Luna. Fresh conversations and simple text-only history passed for both models.
+This is not a missing Runtime invocation grant. The separate dual-endpoint IAM and Ireland retention changes do not fix the Codex history issue.
+
+For an affected Codex conversation:
+
+1. Press Esc to interrupt the stalled turn before changing models again. A picker change does not replace the model already serving an active turn.
+2. If you must retain that conversation, select its original model. A disposable native CLI probe recovered by returning to `global.openai.gpt-5.6-sol`.
+3. If you need a different model, use `/new` to start a separate conversation, then select the desired Global model before submitting work.
+
+Keep the original conversation for reference. Automatic history conversion is not implemented; do not edit live transcript or database files as a workaround.
+Fresh-conversation switching is verified. Seamless cross-model continuation with encrypted reasoning remains an upstream compatibility gap.
+An extended OpenCode test also found a history-compatibility limit. Kimi to Global Astra preserved a user-defined label in the same conversation.
+Continuing that mixed history with GPT-OSS 20B on Mantle returned HTTP 400 from Responses input validation, while a fresh Mantle conversation passed.
+Native routing and IAM access therefore do not guarantee that every pair of models can share the same history.
 
 ### Model registration and limits
 
@@ -315,7 +348,9 @@ Ireland's Bedrock Runtime account retention setting is now `default`, as explici
 Earlier Sol/Astra requests were rejected when that setting was `none`. `default` permits the model's AWS safety/abuse retention policy; it is not zero data retention.
 An `ACTIVE` inference profile does not prove that the account's retention mode permits inference.
 The managed zero-retention guard has an Ireland-only exception in its retention rules. Its other-region rules and invocation-logging restrictions remain in place.
-Ireland's separate Mantle setting remains `none`. Do not add account-retention updates to CDK deployments or change other regions as part of a profile update.
+The user subsequently authorized Ireland's separate Mantle setting to change from `none` to `default`.
+A separate agent applied that account change and verified both endpoints as `default`; the guard policy remained unchanged at version v2.
+Do not add account-retention updates to CDK deployments or change other regions as part of a profile update.
 The earlier GLM 5.3 results and superseded GPT-OSS/Mantle configuration are historical evidence, not the current startup model.
 
 ### Fill the shared network and storage bindings
@@ -552,8 +587,8 @@ The executable must exist in the image. The recognition hint must match the assi
 1. Copy an example as `provision_profiles/NAME.json` inside the runtime component.
 2. Set distinct `stackName` and `runtimeName`. Set the Runtime `region`; add optional tags only when needed.
 3. Select the image with `image: "opencode"` or another repository image reference. Do not copy its build arguments or startup defaults.
-4. Set `inference.bedrock-endpoint-type` to `"runtime"` or `"mantle"`, then set `inference.modelId`. Set `inference.region` only when it differs from the Runtime region. Verify model/API availability and retention eligibility.
-5. Let CDK derive `AWS_REGION`, `BEDROCK_INFERENCE_REGION`, `BEDROCK_ENDPOINT_TYPE`, and `BEDROCK_MODEL_ID`. Do not repeat them in `environment`.
+4. Set `inference.modelId`. Omit the endpoint override for native OpenCode routing or Codex's Runtime default. Set `inference.bedrock-endpoint-type` only for a deliberate advanced override. Set `inference.region` only when it differs from the Runtime region. Verify model/API availability and retention eligibility.
+5. Let CDK derive `AWS_REGION`, `BEDROCK_INFERENCE_REGION`, and `BEDROCK_MODEL_ID`. It exports `BEDROCK_ENDPOINT_TYPE` only for an explicit override. Do not repeat these fields in `environment`.
 6. Reuse the shared env references to share VPC/S3 resources. For different resources, add variable names to `src/agentcore_runtime/.sample.env` and their real values to the adjacent `.env`, then reference those names in the new profile.
    Omit `vpc` and `s3Files` for PUBLIC networking. Keep both for a filesystem mount.
 7. Omit `workingDirectory` to use the mount root, or the image home without a mount. Set it only for another existing directory.
@@ -572,20 +607,98 @@ The current stack supports Bedrock Runtime and Bedrock Mantle inference policies
 
 ### Sample model permissions
 
-For the Bedrock Runtime API, the role grants `bedrock:InvokeModel` and `bedrock:InvokeModelWithResponseStream` on `*`.
-It also grants `bedrock:ListInferenceProfiles` for discovery. It does not grant `bedrock:*` or account-retention administration.
-`inference.modelId` selects the startup model. A compatible model change on the same endpoint needs no per-model IAM update.
+Each role grants `bedrock:InvokeModel` and `bedrock:InvokeModelWithResponseStream` on `*`, plus `bedrock:ListInferenceProfiles` for discovery.
+It also grants `bedrock-mantle:CreateInference` on projects in the configured inference region and deployment account.
+These grants are independent of the startup endpoint. They do not grant `bedrock:*`, `bedrock-mantle:*`, or account-retention administration.
+`inference.modelId` selects the startup model. A compatible model change across either authorized endpoint needs no per-model IAM update.
 Model availability, subscriptions, service controls, and the account's retention policy still apply.
 Unused `inference.retainedModelIds`, `inference.project`, and `retainedModelIds` context values have been removed and are rejected.
 Storage, runtime-role trust, ECR, and logging permissions retain their separate resource scopes.
 An earlier revision deployed this invocation-policy change to the two then-existing EU stacks. The reviewed changes affected only their execution-role policies.
 Two existing OpenCode sessions selected Claude Sonnet 5 (EU) and returned `SONNET5_LIVE_OK` after that update, without restarting their sessions.
-The provision profiles' startup models were not changed for that live selection. All three current profiles use the Runtime policy shown above.
+The provision profiles' startup models were not changed for that live selection. All three current profiles use the dual-endpoint policy described above.
 
 ## Current validation
 
 The latest completed verification is dated 2026-10-19. Runtime versions, assistant package versions, and descriptor version 1 are separate values.
 The dated results record observations, not a live session inventory. Check current state before later operations.
+
+### Model-only profile rebuild — 2026-10-19
+
+The sample profiles now specify only `inference.modelId`. The endpoint field is an optional advanced override.
+Codex defaults to native Runtime in its image. OpenCode uses model metadata without a generated SDK-selection overlay.
+The shared Kimi entry declares its Runtime SDK once. All execution roles still permit both inference endpoints.
+
+At the user's request, all six existing project sessions were detached and received stop requests.
+Official CDK destroy commands deleted the three numbered stacks. AWS reads confirmed their old runtimes and execution roles absent.
+Fresh CDK deployments recreated all three stacks with new runtime ARNs. Shared VPC, S3 Files, and bootstrap resources were preserved.
+All stacks reached `CREATE_COMPLETE`; all runtimes and `DEFAULT` endpoints reached version 1 and `READY`.
+None of their deployed environments contains `BEDROCK_ENDPOINT_TYPE`. The three saved connection profiles were replaced from the new outputs.
+
+| Verification | Result |
+| --- | --- |
+| ARM64 images and local checks | Both builds, TypeScript, 21 CDK tests, and 217 Python tests passed. |
+| Interactive E2E on all three profiles | Model reply, runtime-role checks, detach/attachment, context follow-up, real `date` tool, and stop flow passed. |
+| Codex sandbox | Workspace writes, protected metadata, hidden host paths, network isolation, and model-driven `date` passed. |
+| Both OpenCode health probes | Work/busy, question/wait/idle, reply/busy, completion/idle, and process-death cleanup passed. |
+| Shared file persistence | Session A wrote 4 KiB and 8 MiB files; session B read matching hashes. Cleanup removed the probe's files. |
+| Fresh native endpoint calls on both OpenCode profiles | Global Astra through Runtime and GPT-OSS 20B through Mantle passed without an endpoint override. |
+| Same-conversation Kimi to Global Astra | Both OpenCode profiles recalled a label from the first user message. |
+| Continuing that history on Mantle GPT-OSS 20B | Failed with HTTP 400 Responses history-validation errors. Fresh Mantle calls passed. |
+| Codex simple-text switch to Global Astra | Fresh and resumed calls passed. The earlier encrypted-history limitation remains. |
+
+The initial PUBLIC OpenCode attachment test returned a space after `RESUMED:`. The smoke matcher now accepts separator whitespace while still requiring the full expected answer; the rerun passed.
+Six new interactive sessions were opened in three replacement tabs and left connected for the user.
+All returned real date and folder-access results. One Kimi turn ended with no final answer after approximately 132 seconds; a short follow-up succeeded.
+All disposable probe sessions received stop requests, and isolated Herdr servers stopped.
+Final CDK diffs showed no changes. Both Ireland retention settings remained `default`.
+Outputs remain in the matching ignored `.local/deployments/NAME.json` files. Older records and results describe retired runtime instances.
+
+### Dual-endpoint permissions and Ireland retention — 2026-10-19
+
+The user authorized both inference endpoints in each execution role and delegated the Ireland-only retention change to a separate agent.
+That agent changed Ireland Mantle account retention from `none` to `default` with `PutAccountDataRetention` and verified the result.
+Ireland Runtime remained `default`. The managed zero-retention guard remained at version v2 with identical contents, including other-region and logging restrictions.
+
+The shared CDK stack now grants Runtime invocation/streaming, inference-profile discovery, and region/account-project-scoped Mantle inference to all three roles.
+The startup endpoint still selects the native client; it no longer selects the role's inference permissions.
+Each reviewed deployment diff changed only the execution-role policy. All three stacks reached `UPDATE_COMPLETE`.
+Runtime/DEFAULT versions remained 4 for Codex and 1 for both OpenCode profiles; all reported `READY`.
+
+Fresh disposable sessions verified these outcomes:
+
+| Profile | Runtime | Mantle |
+| --- | --- | --- |
+| Codex | Global Astra returned the expected response. | The Astra ID returned model-not-found 404, not an IAM denial. No successful Codex Mantle model turn is claimed for this check. |
+| OpenCode PUBLIC | Global Astra returned the expected response. | GPT-OSS 20B returned the expected response. |
+| OpenCode with S3 Files | Global Astra returned the expected response. | GPT-OSS 20B returned the expected response. |
+
+Ireland's Mantle model list included GPT-OSS 20B but did not include the Astra ID advertised by the native client catalog.
+The role environments contained no static credentials or provider tokens. All disposable probe sessions received stop requests.
+TypeScript and all 21 CDK tests passed, including identical inference IAM for either startup endpoint.
+Final CDK diffs showed no changes for all three profiles. Documentation, package, privacy, and whitespace checks passed.
+These changes remove the endpoint-based IAM restriction. They do not fix Codex's cross-model encrypted-history issue or guarantee every catalog entry exists in Ireland.
+
+### Model-switch diagnosis — 2026-10-19
+
+The user reported failures in the Codex and PUBLIC OpenCode tabs after the six-session test.
+Read-only inspection identified a Mantle/Runtime picker mismatch in one OpenCode pane. The other pane successfully used the Global Astra entry.
+Both Codex panes had accepted model changes but remained in earlier active turns, waiting on Responses streams.
+Their logs showed HTTP 200 followed by `idle timeout waiting for SSE` after 300 seconds and native sampling retries.
+
+| Controlled check | Result |
+| --- | --- |
+| Fresh Codex Astra and Luna conversations | Passed in approximately 1–2 seconds. |
+| Simple Sol text history resumed with Astra or Luna | Passed. |
+| Sol tool history containing encrypted reasoning resumed with Astra or Luna | No completed response within the probe's 55-second bound. |
+| A failed cross-model probe resumed with the original Sol model | Passed in approximately 1 second; saved history was retained. |
+| Direct Runtime Responses request with synthetic Sol reasoning replayed to Sol | Passed in approximately 1 second. |
+| The same synthetic history replayed to Astra | HTTP 200 and `response.created`, then no completed response within 25 seconds. |
+| The Astra request with only the reasoning item omitted | Passed in approximately 1 second. |
+
+The direct API comparison kept synthetic response data in memory. It did not modify a user's history.
+All disposable runtime probe sessions received stop requests. The user's six sessions were not replaced or stopped.
+No image, IAM policy, or retention setting changed during this diagnosis. See the [model-switching procedure](#model-switching-endpoint-and-history-limits).
 
 ### All profiles and six interactive sessions — 2026-10-19
 
@@ -680,7 +793,7 @@ No static credential snapshots were present in the prepared launcher environment
 All four isolated smoke-test sessions received stop requests. Filesystem tests could not create their temporary directory, so file write/read qualification was not reached.
 The account retention setting was re-read as `none`; it was not changed.
 AWS reported no custom application tags on any of the three runtimes. Their deployed environment contains no `OPENCODE_CONFIG` or `OPENCODE_CONFIG_CONTENT` entry.
-The OpenCode launcher still creates its small process-local SDK-selection overlay, as described above.
+That earlier OpenCode launcher created a process-local SDK-selection overlay. The current model-only profiles use native catalog routing without that overlay.
 
 Local checks passed 21 CDK tests and 212 Python tests, including both image checks.
 CDK built/published the two assistant images; both OpenCode deployments use the same image asset.
@@ -867,6 +980,7 @@ Do not delete a shared asset repository as part of a runtime teardown.
 - [AWS Codex sample collection](https://github.com/awslabs/agentcore-samples/tree/main/01-features/02-host-your-agent/01-runtime/04-coding-agents/03-code-agents-competition-e2e/coding_agents).
 - [Codex with Amazon Bedrock](https://developers.openai.com/codex/amazon-bedrock).
 - [Pinned Codex Runtime endpoint and AWS signing](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/model-provider/src/amazon_bedrock/runtime.rs).
+- [Pinned Codex Responses request construction and encrypted reasoning replay](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/core/src/client.rs).
 - [Pinned OpenCode native Runtime and Mantle providers](https://github.com/anomalyco/opencode/blob/v1.18.30/packages/opencode/src/provider/provider.ts).
 - [Pinned Codex permission-profile compiler](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/core/src/config/permissions.rs).
 - [Pinned Codex daemon mount masking](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/linux-sandbox/src/daemon_mounts.rs).

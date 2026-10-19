@@ -383,7 +383,9 @@ def run(
                     "Herdr follow-up prompt/wait failed; input will not be resubmitted."
                 )
             until(
-                lambda: "RESUMED:HERDR-CLOUD=457" in herdr.read(pane), "follow-up model reply", 60
+                lambda: re.search(r"RESUMED:\s*HERDR-CLOUD=457", herdr.read(pane)),
+                "follow-up model reply",
+                60,
             )
             print(
                 "PASS: follow-up model turn after reattach retained conversation context",

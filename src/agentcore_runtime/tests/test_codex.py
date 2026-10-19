@@ -42,6 +42,7 @@ def test_codex_only_inherits_nonsecret_runtime_settings():
 @pytest.mark.parametrize(
     "endpoint_type,provider,model",
     [
+        (None, "amazon-bedrock-runtime", "global.openai.gpt-5.6-sol"),
         ("runtime", "amazon-bedrock-runtime", "global.openai.gpt-5.6-sol"),
         ("mantle", "amazon-bedrock", "openai.gpt-5.6-sol"),
     ],
@@ -54,7 +55,10 @@ def test_codex_launch_preserves_user_config_and_native_arguments(
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("BEDROCK_INFERENCE_REGION", "us-east-2")
     monkeypatch.setenv("BEDROCK_MODEL_ID", model)
-    monkeypatch.setenv("BEDROCK_ENDPOINT_TYPE", endpoint_type)
+    monkeypatch.delenv("BEDROCK_ENDPOINT_TYPE", raising=False)
+    if endpoint_type is not None:
+        monkeypatch.setenv("BEDROCK_ENDPOINT_TYPE", endpoint_type)
+    monkeypatch.setattr(Path, "read_bytes", lambda _: b"")
     monkeypatch.setattr(sys, "argv", ["launch.py", "--version"])
     execute = Mock()
     monkeypatch.setattr(runtime.os, "execvpe", execute)
@@ -65,7 +69,7 @@ def test_codex_launch_preserves_user_config_and_native_arguments(
     assert f'model_provider="{provider}"' in argv
     assert f'model_providers.{provider}.aws.region="us-east-2"' in argv
     assert argv[argv.index("--model") + 1] == model
-    assert ('web_search="disabled"' in argv) == (endpoint_type == "runtime")
+    assert ('web_search="disabled"' in argv) == (endpoint_type != "mantle")
     assert "--yolo" not in argv
     assert config.read_text() == 'approval_policy = "on-request"'
 
@@ -73,9 +77,9 @@ def test_codex_launch_preserves_user_config_and_native_arguments(
 @pytest.mark.skipif(
     not os.environ.get("CODEX_RUNTIME_TEST_IMAGE"), reason="Opt-in Codex image test"
 )
-@pytest.mark.parametrize("endpoint_type", ["runtime", "mantle"])
+@pytest.mark.parametrize("endpoint_type", [None, "runtime", "mantle"])
 def test_codex_image_starts_cli_without_credentials_or_network(endpoint_type):
-    model = "global.openai.gpt-5.6-sol" if endpoint_type == "runtime" else "openai.gpt-5.6-sol"
+    model = "openai.gpt-5.6-sol" if endpoint_type == "mantle" else "global.openai.gpt-5.6-sol"
     result = subprocess.run(
         [
             "docker",
@@ -87,8 +91,11 @@ def test_codex_image_starts_cli_without_credentials_or_network(endpoint_type):
             "BEDROCK_INFERENCE_REGION=us-east-2",
             "-e",
             f"BEDROCK_MODEL_ID={model}",
-            "-e",
-            f"BEDROCK_ENDPOINT_TYPE={endpoint_type}",
+            *(
+                ["-e", f"BEDROCK_ENDPOINT_TYPE={endpoint_type}"]
+                if endpoint_type is not None
+                else []
+            ),
             os.environ["CODEX_RUNTIME_TEST_IMAGE"],
             "/app/run.sh",
             "--version",

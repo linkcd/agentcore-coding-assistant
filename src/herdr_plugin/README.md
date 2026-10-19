@@ -115,11 +115,11 @@ Adding the numbered profiles preserves an older saved default. Use an explicit l
 
 ## Latest verification — 2026-10-19
 
-The three numbered descriptors were imported into Herdr. Two independent sessions per profile opened in three tabs.
-All six passed native recognition, real model-driven date commands, and read-only folder-access checks.
+After the model-only profile rebuild, all three numbered descriptors were replaced with new runtime ARNs. Two independent sessions per profile opened in three replacement tabs.
+All six passed native recognition and returned real date and folder-access results.
 The user-requested sessions were left open. They are not disposable probe sessions; check live state before any later operation.
-The Codex/Sol deployment also passed an isolated detach/attachment, context-preserving follow-up, runtime-role, and shell-tool probe.
-That probe stopped its own session and server. See the [runtime results](../agentcore_runtime/README.md#current-validation) for versions and test scope.
+All three deployments passed isolated detach/attachment, context-preserving follow-up, runtime-role, and shell-tool probes.
+Those probes stopped their own sessions and servers. See the [runtime results](../agentcore_runtime/README.md#current-validation) for versions, test scope, and model-history limits.
 
 ## Format and command ownership
 

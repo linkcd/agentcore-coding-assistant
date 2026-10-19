@@ -50,7 +50,8 @@ def launch_environment(current: dict[str, str], container: bytes) -> dict[str, s
     region = env.get("AWS_REGION") or env.get("AWS_DEFAULT_REGION")
     if not region or not env.get("BEDROCK_MODEL_ID"):
         raise ValueError("The runtime must configure AWS_REGION and BEDROCK_MODEL_ID.")
-    if env.get("BEDROCK_ENDPOINT_TYPE") not in PROVIDERS:
+    endpoint_type = env.get("BEDROCK_ENDPOINT_TYPE")
+    if endpoint_type is not None and endpoint_type not in PROVIDERS:
         raise ValueError('BEDROCK_ENDPOINT_TYPE must be "runtime" or "mantle".')
     env["AWS_REGION"] = region
     env.setdefault("AWS_DEFAULT_REGION", region)
@@ -60,7 +61,9 @@ def launch_environment(current: dict[str, str], container: bytes) -> dict[str, s
     # Keep the image's pinned executable stable even on a fresh remote shell.
     env["OPENCODE_DISABLE_AUTOUPDATE"] = "1"
     env.setdefault("OPENCODE_CONFIG", "/app/opencode.json")
-    env["OPENCODE_CONFIG_CONTENT"] = endpoint_configuration(env)
+    # Native model metadata selects the route unless a profile explicitly overrides it.
+    if endpoint_type is not None:
+        env["OPENCODE_CONFIG_CONTENT"] = endpoint_configuration(env)
     return env
 
 

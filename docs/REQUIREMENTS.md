@@ -156,9 +156,10 @@ Runtime descriptors exclude credentials and host AWS profile selection.
 Every connection profile requires explicit launch argv. A missing connection assistant hint selects an ordinary terminal.
 Profiles are unreleased; internal version fields do not require backward-compatibility branches.
 Named provision profiles reference explicit image launch defaults and can override them. Several project profiles can reuse the same OpenCode image.
-Require `inference.bedrock-endpoint-type` with exactly `"runtime"` or `"mantle"`.
-Use the selected value for both inference IAM and the startup model's native client. All three samples use Runtime.
-Reject missing values, old field names, and duplicate derived endpoint environment settings.
+Require only `inference.modelId` for normal startup selection. OpenCode uses native model metadata; the Codex image defaults to its Runtime provider.
+Permit optional `inference.bedrock-endpoint-type` with exactly `"runtime"` or `"mantle"` as an advanced startup override.
+Authorize both Runtime and Mantle inference in each sample execution role, independently of startup routing. Keep grants limited to inference and discovery.
+Reject invalid explicit values, old field names, and duplicate derived endpoint environment settings. Omit the endpoint environment key when the profile has no override.
 Resolve deployment choices from the selected provision profile and component `.env` at the CDK entrypoint.
 Pass resolved properties into the stack. Reject per-field context overrides and ignore ambient shell variables for profile bindings.
 Use the authenticated CDK Toolkit for account identity. Keep credentials outside deployment files.
@@ -190,9 +191,9 @@ Cognito, per-user runtime authorization catalogs, DynamoDB customer registries, 
 | Owned runtime | Deploy the image, call Bedrock through its role, and connect. | All three current profiles passed CDK deploy with no changes and reached READY. Sol and both Kimi profiles passed real model/tool calls. |
 | Safe updates | Review CDK differences, keep sample model invocation independent of the selected model, and register resolved outputs after success. | CDK tests cover invocation-only permissions, scoped storage/trust, and outputs. Earlier custom-provisioner tests are historical evidence only. |
 | Runtime lifecycle | Report actual work and document per-session limits. | All profiles use 900 seconds idle and 28,800 seconds maximum. The filesystem profile mounts S3 Files. OpenCode has activity health; Codex has readiness only. Full expiry tests remain pending. |
-| Waiting for input | Report idle only when no other tracked work runs. Resume busy reporting after a reply. | Earlier OpenCode cloud question/reply cycles passed. Current local tests cover concurrent tools, nested tasks, permission requests, errors, and unknown children. The latest six-session check did not repeat the cloud question/health probe. |
+| Waiting for input | Report idle only when no other tracked work runs. Resume busy reporting after a reply. | Both rebuilt OpenCode deployments passed fresh cloud question/wait/reply and process-death health probes. Local tests cover concurrent tools, nested tasks, permission requests, errors, and unknown children. |
 | Terminal transport | Preserve bytes and resize. Keep detach responsive under output pressure. Restore modes. | Earlier cloud I/O/resize passed. Current PTY tests cover backpressure, partial writes, and closed-descriptor cleanup. |
-| Session identity | Reuse original IDs without a second launch. | The latest Codex/Sol probe passed attachment and context-aware follow-up. Earlier OpenCode same-PID and conversation checks passed. Current offline tests preserve identity on retry. |
+| Session identity | Reuse original IDs without a second launch. | All three rebuilt profiles passed attachment and context-aware follow-up. Earlier same-PID checks and current offline identity-preservation tests also passed. |
 | Failure handling | Do not replay uncertain input. Stop retrying after takeover. Refuse a replacement PTY after launch. | Offline tests pass, including classified retryable conflicts. |
 | Storage and updates | Retain snapshots and extra record fields. Isolate damaged records. Prevent competing attachment. | Offline validation, locking, timezone ordering, and file/directory sync tests pass. Managed install/update remains pending. |
 | Real cloud workflow | Support prompts, result collection, attachment, and explicit cleanup. | Six current-profile sessions completed date and folder-access requests in three tabs and were left open for the user. Separate disposable probes cleaned up their files/sessions. Dialog and forced-outage coverage remains incomplete. |
@@ -200,6 +201,7 @@ Cognito, per-user runtime authorization catalogs, DynamoDB customer registries, 
 | Platform compatibility | Pass on supported macOS/Linux and Python versions. | macOS/Python 3.13 tested locally. Remote CI matrix execution remains pending. |
 | Clean execution | Give new independent work fresh compute and a separate namespace. Preserve selected existing files. | Remote IDs are independent. The filesystem sessions share one mount root; automatic per-binding namespaces and persistent home remain pending. |
 | Runtime credentials | Refresh temporary role credentials without stored snapshots. | Fresh model calls and credential-presence checks passed. Full credential rollover remains unverified. |
+| Model switching | Select another compatible model without a model-ID IAM update. | Model-only profiles permit both endpoints. Both OpenCode profiles passed fresh Runtime/Mantle calls and same-conversation Kimi-to-Astra recall. Mixed-history continuation on Mantle GPT-OSS returned HTTP 400. Codex encrypted-history conversion and regional model availability remain limits. |
 | Process recovery | Restore the same binding and conversation in a replacement process/PTY. | Manually verified while compute survived. No automated resume action. |
 | Compute recovery | Restore files and conversation after confirmed compute stop. | Not implemented. |
 | Herdr rebinding | Attach recovered work and respect live-name uniqueness. | Not implemented. |
@@ -214,14 +216,15 @@ Cognito, per-user runtime authorization catalogs, DynamoDB customer registries, 
 
 ### Latest verification — 2026-10-19
 
-Both ARM64 builds, TypeScript, 21 CDK tests, and all 212 Python tests passed.
-All three numbered profiles passed CDK deploy with no changes. The latest six-session check passed real model-driven date and read-only folder-access requests.
+Both ARM64 builds, TypeScript, 21 CDK tests, and all 217 Python tests passed for the model-only profile revision.
+All three numbered profiles were destroyed and recreated with new ARNs. Every Runtime/DEFAULT endpoint reached version 1 and READY without a deployed endpoint override.
+All three interactive E2E flows, both OpenCode activity probes, and the Codex sandbox probe passed. Six replacement sessions returned date and folder-access results.
 Separate-session storage checks verified matching 4 KiB and 8 MiB files, then removed the probe's files and requested stop for its three sessions.
 The six user-requested interactive sessions were left open. Codex work-health and broader tool/approval cases remain unqualified.
-The latest Codex deployment reached Runtime/DEFAULT version 4 with GPT-5.6 Sol on native Bedrock Runtime in Ireland.
+The rebuilt Codex deployment reached Runtime/DEFAULT version 1 with GPT-5.6 Sol on native Bedrock Runtime in Ireland.
 Fresh sessions passed model inference, sandbox isolation, runtime-role checks, attachment, a context-preserving follow-up, and a real `date` tool call.
-Ireland Runtime retention was verified as `default`; the profile deployment did not change account retention controls.
-Both probe sessions received stop requests. The isolated Herdr server stopped, and the final CDK diff showed no changes.
+Both Ireland retention settings were verified as `default`; the rebuild did not change account retention controls.
+All disposable probe sessions received stop requests. Isolated Herdr servers stopped, and all three final CDK diffs showed no changes.
 See the [runtime validation record](../src/agentcore_runtime/README.md#current-validation) for exact test scope.
 
 ### Historical validation

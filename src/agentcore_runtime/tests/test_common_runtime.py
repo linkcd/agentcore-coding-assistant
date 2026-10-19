@@ -57,9 +57,9 @@ def test_invalid_environment_never_executes_a_program(monkeypatch):
 
 @pytest.mark.parametrize("adapter", [opencode, codex])
 @pytest.mark.parametrize(
-    "endpoint_type", [None, "Bedrock Runtime", "Bedrock Mantle", "Runtime", "runtime "]
+    "endpoint_type", ["", "Bedrock Runtime", "Bedrock Mantle", "Runtime", "runtime "]
 )
-def test_missing_or_invalid_endpoint_type_never_launches(monkeypatch, adapter, endpoint_type):
+def test_invalid_endpoint_override_never_launches(monkeypatch, adapter, endpoint_type):
     monkeypatch.setenv("AWS_REGION", "eu-west-1")
     monkeypatch.setenv("BEDROCK_INFERENCE_REGION", "eu-west-1")
     monkeypatch.setenv("BEDROCK_MODEL_ID", "example.model")
@@ -72,6 +72,22 @@ def test_missing_or_invalid_endpoint_type_never_launches(monkeypatch, adapter, e
     with pytest.raises(SystemExit):
         runtime.launch(adapter)
     execute.assert_not_called()
+
+
+@pytest.mark.parametrize("adapter", [opencode, codex])
+def test_model_only_settings_use_image_defaults_without_changing_the_input(adapter):
+    settings = {
+        "AWS_REGION": "eu-west-1",
+        "BEDROCK_INFERENCE_REGION": "eu-west-1",
+        "BEDROCK_MODEL_ID": "global.openai.gpt-5.6-sol",
+    }
+    env = adapter.launch_environment(settings, b"")
+    assert "BEDROCK_ENDPOINT_TYPE" not in settings
+    if adapter is codex:
+        assert 'model_provider="amazon-bedrock-runtime"' in adapter.launch_arguments(env, [])
+    else:
+        assert "BEDROCK_ENDPOINT_TYPE" not in env
+        assert "OPENCODE_CONFIG_CONTENT" not in env
 
 
 @pytest.mark.parametrize("adapter", [opencode, codex])

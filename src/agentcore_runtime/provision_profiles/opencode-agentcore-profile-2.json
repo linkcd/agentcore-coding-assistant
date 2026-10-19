@@ -4,7 +4,6 @@
   "region": "eu-west-1",
   "image": "opencode",
   "inference": {
-    "bedrock-endpoint-type": "runtime",
     "modelId": "global.moonshotai.kimi-k3"
   },
   "lifecycle": {

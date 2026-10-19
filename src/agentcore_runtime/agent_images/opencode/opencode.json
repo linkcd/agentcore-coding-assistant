@@ -8,6 +8,7 @@
       "models": {
         "global.moonshotai.kimi-k3": {
           "name": "Kimi K3 (global)",
+          "provider": { "npm": "@ai-sdk/amazon-bedrock" },
           "limit": { "context": 1000000, "output": 8192 },
           "reasoning": true,
           "tool_call": true,

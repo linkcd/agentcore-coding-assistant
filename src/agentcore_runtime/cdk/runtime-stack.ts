@@ -45,22 +45,20 @@ export class RuntimeStack extends Stack {
     image.repository.grantPull(role);
     const inferenceRegion = props.profile.inference.region ?? this.region;
     const endpointType = props.profile.inference["bedrock-endpoint-type"];
-    if (endpointType === "runtime") {
-      // The profile chooses a startup model, not an IAM model allowlist.
-      // Live sessions may select any model authorized by the account's other controls.
-      role.addToPolicy(new iam.PolicyStatement({
-        actions: ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"], resources: ["*"],
-      }));
-      role.addToPolicy(new iam.PolicyStatement({ actions: ["bedrock:ListInferenceProfiles"], resources: ["*"] }));
-    } else if (endpointType === "mantle") {
-      role.addToPolicy(new iam.PolicyStatement({
-        actions: ["bedrock-mantle:CreateInference"],
-        resources: [this.formatArn({ service: "bedrock-mantle", region: inferenceRegion,
-          resource: "project", resourceName: "*", arnFormat: ArnFormat.SLASH_RESOURCE_NAME })],
-      }));
-    } else {
+    if (endpointType !== undefined && endpointType !== "runtime" && endpointType !== "mantle") {
       throw new Error("Invalid inference.bedrock-endpoint-type");
     }
+    // Startup routing does not restrict later native model selections.
+    // Both endpoints remain subject to account access and retention controls.
+    role.addToPolicy(new iam.PolicyStatement({
+      actions: ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"], resources: ["*"],
+    }));
+    role.addToPolicy(new iam.PolicyStatement({ actions: ["bedrock:ListInferenceProfiles"], resources: ["*"] }));
+    role.addToPolicy(new iam.PolicyStatement({
+      actions: ["bedrock-mantle:CreateInference"],
+      resources: [this.formatArn({ service: "bedrock-mantle", region: inferenceRegion,
+        resource: "project", resourceName: "*", arnFormat: ArnFormat.SLASH_RESOURCE_NAME })],
+    }));
     role.addToPolicy(new iam.PolicyStatement({
       actions: ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents", "logs:DescribeLogStreams", "logs:PutResourcePolicy"],
       resources: [this.formatArn({ service: "logs", resource: "log-group",
@@ -116,7 +114,7 @@ export class RuntimeStack extends Stack {
         AWS_REGION: this.region,
         BEDROCK_MODEL_ID: modelId,
         BEDROCK_INFERENCE_REGION: inferenceRegion,
-        BEDROCK_ENDPOINT_TYPE: endpointType,
+        ...(endpointType !== undefined ? { BEDROCK_ENDPOINT_TYPE: endpointType } : {}),
         ...(workingDirectory ? { AGENTCORE_WORKDIR: workingDirectory } : {}),
         ...(props.profile.s3Files ? { AGENTCORE_REQUIRED_MOUNT: props.profile.s3Files.mountPath } : {}),
       },

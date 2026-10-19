@@ -39,14 +39,14 @@ test("the repository has exactly the three requested sample profiles", () => {
   assert.equal(codex.inference.modelId, "global.openai.gpt-5.6-sol");
   assert.equal(opencode.inference.modelId, "global.moonshotai.kimi-k3");
   assert.deepEqual(opencode.inference, storage.inference);
-  assert.equal(opencode.inference["bedrock-endpoint-type"], "runtime");
+  assert.deepEqual(opencode.inference, { modelId: "global.moonshotai.kimi-k3" });
   assert.equal(opencode.environment, undefined);
   assert.equal(storage.environment, undefined);
   assert.equal(codex.vpc, undefined);
   assert.equal(opencode.vpc, undefined);
   assert.ok(storage.vpc && storage.s3Files);
   for (const profile of [codex, opencode, storage]) {
-    assert.equal(profile.inference["bedrock-endpoint-type"], "runtime");
+    assert.equal(profile.inference["bedrock-endpoint-type"], undefined);
     assert.equal(profile.inference.region, undefined);
     assert.equal(profile.command, undefined);
     assert.equal(profile.agentKind, undefined);
@@ -71,7 +71,7 @@ test("public samples have no VPC, storage lookup, or mount requirement", () => {
         AWS_REGION: profile.region,
         BEDROCK_INFERENCE_REGION: profile.inference.region ?? profile.region,
         BEDROCK_MODEL_ID: profile.inference.modelId,
-        BEDROCK_ENDPOINT_TYPE: profile.inference["bedrock-endpoint-type"],
+        BEDROCK_ENDPOINT_TYPE: Match.absent(),
         CODEX_BEDROCK_BASE_URL: Match.absent(),
         CODEX_AGENTS_ENABLED: Match.absent(), CODEX_WEB_SEARCH: Match.absent(),
         AGENTCORE_REQUIRED_MOUNT: Match.absent(), AGENTCORE_WORKDIR: Match.absent(),
@@ -93,6 +93,7 @@ test("sample deployments have no custom tags or serialized OpenCode configuratio
     t.hasResourceProperties("AWS::BedrockAgentCore::Runtime", {
       Tags: Match.absent(), EnvironmentVariables: {
         OPENCODE_CONFIG: Match.absent(), OPENCODE_CONFIG_CONTENT: Match.absent(),
+        BEDROCK_ENDPOINT_TYPE: Match.absent(),
       },
     });
     t.hasResourceProperties("AWS::IAM::Role", { Tags: Match.absent() });
@@ -120,7 +121,7 @@ test("profile names remain generic settings references", () => {
   assert.throws(() => loadProfile("reviewer", {}), { code: "ENOENT" });
 });
 
-test("sample inference IAM allows live model selection but not Bedrock administration", () => {
+test("sample inference IAM permits both native endpoints but not Bedrock administration", () => {
   for (const name of PROFILE_NAMES) {
     const policy = template(name).findResources("AWS::IAM::Policy");
     const statements = Object.values(policy).flatMap((p: any) => p.Properties.PolicyDocument.Statement);
@@ -129,11 +130,15 @@ test("sample inference IAM allows live model selection but not Bedrock administr
     assert.deepEqual(new Set(bedrock.flatMap((statement: any) => [statement.Action].flat())),
       new Set(["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream", "bedrock:ListInferenceProfiles"]));
     assert.ok(bedrock.every((statement: any) => statement.Resource === "*"));
-    assert.ok(!JSON.stringify(statements).includes("bedrock-mantle:"));
+    const mantle = statements.filter((statement: any) =>
+      [statement.Action].flat().some((action: string) => action.startsWith("bedrock-mantle:")));
+    assert.equal(mantle.length, 1);
+    assert.equal(mantle[0].Action, "bedrock-mantle:CreateInference");
+    assert.ok(JSON.stringify(mantle[0].Resource).includes(":bedrock-mantle:eu-west-1:123456789012:project/*"));
   }
 });
 
-test("Mantle selection changes both launch configuration and inference IAM", () => {
+test("startup endpoint selection changes client configuration without narrowing inference IAM", () => {
   for (const name of [CODEX, OPENCODE]) {
     const profile = parseProfile({ ...profileFor(name), inference: {
       "bedrock-endpoint-type": "mantle", modelId: "openai.gpt-5.6-sol", region: "us-east-2",
@@ -150,13 +155,24 @@ test("Mantle selection changes both launch configuration and inference IAM", () 
     assert.equal(mantle.length, 1);
     assert.equal(mantle[0].Action, "bedrock-mantle:CreateInference");
     assert.ok(JSON.stringify(mantle[0].Resource).includes(":bedrock-mantle:us-east-2:123456789012:project/*"));
-    assert.ok(!JSON.stringify(statements).includes("bedrock:"));
+    const runtimeProfile = parseProfile({ ...profile, inference: {
+      ...profile.inference, "bedrock-endpoint-type": "runtime", modelId: "global.openai.gpt-5.6-sol",
+    } });
+    assert.deepEqual(t.findResources("AWS::IAM::Policy"),
+      template(name, runtimeProfile).findResources("AWS::IAM::Policy"));
+    const automaticProfile = parseProfile({ ...profile, inference: {
+      modelId: "global.openai.gpt-5.6-sol", region: "us-east-2",
+    } });
+    assert.deepEqual(t.findResources("AWS::IAM::Policy"),
+      template(name, automaticProfile).findResources("AWS::IAM::Policy"));
+    assert.ok(JSON.stringify(statements).includes("bedrock:InvokeModel"));
   }
 });
 
-test("the endpoint field accepts only the two exact values and rejects earlier names", () => {
+test("the optional endpoint override accepts exact values and rejects invalid values and earlier names", () => {
   const base = profileFor(CODEX);
-  for (const value of [undefined, null, "Bedrock Runtime", "Bedrock Mantle", "bedrock", "Runtime", "runtime ", [], {}]) {
+  assert.deepEqual(parseProfile(base).inference, { modelId: "global.openai.gpt-5.6-sol" });
+  for (const value of [null, "", "Bedrock Runtime", "Bedrock Mantle", "bedrock", "Runtime", "runtime ", [], {}]) {
     assert.throws(() => parseProfile({ ...base, inference: { ...base.inference, "bedrock-endpoint-type": value } }),
       /inference.bedrock-endpoint-type must be "runtime" or "mantle"/);
   }
@@ -204,7 +220,7 @@ test("S3 configuration uses only the access point, without direct bucket access 
     } }],
     EnvironmentVariables: {
       AGENTCORE_WORKDIR: "/mnt/workspace", AGENTCORE_REQUIRED_MOUNT: "/mnt/workspace",
-      BEDROCK_ENDPOINT_TYPE: "runtime",
+      BEDROCK_ENDPOINT_TYPE: Match.absent(),
     },
   });
   t.resourceCountIs("Custom::AWS", 0);

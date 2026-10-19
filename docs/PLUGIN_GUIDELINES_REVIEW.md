@@ -93,10 +93,10 @@ npm test --prefix src/agentcore_runtime/cdk
 ```
 
 The current layout has Python, CDK assertion, image, and named-profile checks.
-The latest all-profile verification passed both ARM64 builds, 21 CDK tests, and all 212 Python tests.
-All three numbered CDK deployments reported no changes. Their current descriptors were imported under their numbered connection profile names.
-Six user-requested sessions opened in three tabs and passed real date and read-only folder-access checks. They were left open after verification.
-The latest Codex/Sol isolated probe passed new, recognition, attachment, follow-up, shell-tool, and stop operations.
+The model-only profile revision passed both ARM64 builds, 21 CDK tests, and all 217 Python tests.
+All three numbered stacks were destroyed and recreated. Their new descriptors replaced the saved numbered connection profiles; final CDK diffs showed no changes.
+Six replacement user sessions returned date and folder-access results in three tabs and were left connected.
+Isolated probes on all three profiles passed new, recognition, attachment, follow-up, shell-tool, and stop operations. Both OpenCode health probes and the Codex sandbox probe passed.
 The filesystem profile also passed a separate cross-session file probe; its temporary files and sessions were cleaned up.
 See the [current runtime results](../src/agentcore_runtime/README.md#current-validation) for deployment versions and validation limits.
 Independent connector/contract distributions and descriptor import have validation coverage. The CDK project has separate assertion tests.

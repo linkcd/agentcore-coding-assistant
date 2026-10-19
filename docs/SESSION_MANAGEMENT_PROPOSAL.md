@@ -145,11 +145,11 @@ Later Codex tests passed a sandboxed `date` tool call and scoped isolation check
 Codex work-health, broader tool/approval cases, and long-duration behavior remain unqualified.
 Runtime infrastructure uses official AWS CDK under `cdk/`. Named provision profiles select configuration, not hardcoded assistant types.
 The saved `runtime_profile` reference is separate from the local Herdr connection profile and its recognition hint.
-All three numbered profiles passed CDK deploy with no changes on 2026-10-19. Runtime/DEFAULT versions were 4 for Codex and 1 for both OpenCode profiles; all were READY.
-Two sessions per profile passed model-driven date commands and read-only folder checks. The six user-requested sessions were left open after verification.
+The model-only profiles were destroyed and recreated on 2026-10-19. All new Runtime/DEFAULT endpoints reached version 1 and READY; final CDK diffs showed no changes.
+The old six sessions received stop requests. Two fresh sessions per profile returned date and folder-access results in replacement tabs and were left connected.
 The filesystem profile passed mounted startup and matching 4 KiB/8 MiB writes and reads across separate sessions.
 The separate storage probe removed its files and requested stop for its sessions. Conversation checkpoints, per-binding namespaces, and automatic recovery remain pending.
-See the [latest verification](../src/agentcore_runtime/README.md#all-profiles-and-six-interactive-sessions--2026-10-19) for the complete evidence.
+See the [latest verification](../src/agentcore_runtime/README.md#model-only-profile-rebuild--2026-10-19) for the complete evidence, including model-history compatibility limits.
 `HealthyBusy` reports active work; it cannot preserve files or extend the maximum lifetime.
 
 ## 3. Identity model: what maps to what?

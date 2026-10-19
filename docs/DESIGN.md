@@ -273,10 +273,11 @@ No research checkout, GitHub gateway, or shared sample deployment file is requir
 The current settings name `HerdrOpenCodeRuntime`, `HerdrOpenCodeS3FilesystemRuntime`, and `HerdrCodexRuntime`.
 These are example profile properties, not connector constants.
 Role trust restricts access to the account and matching runtime name. CDK's repository grant supplies image-pull access.
-Model permissions and client selection follow `inference.bedrock-endpoint-type`.
-It accepts exactly `"runtime"` or `"mantle"`. All three samples select Runtime.
+Normal startup selection requires only `inference.modelId`. OpenCode uses the selected model's native catalog metadata; the Codex image defaults to the Runtime provider.
+The optional advanced override `inference.bedrock-endpoint-type` accepts exactly `"runtime"` or `"mantle"`. The samples omit it.
+Each sample execution role permits both Runtime and Mantle inference. Startup routing no longer narrows those permissions.
 These are project-defined configuration values, not built-in CDK enum values.
-The same generic stack consumes each settings file and exports the choice as `BEDROCK_ENDPOINT_TYPE` in the container environment.
+The same generic stack consumes each settings file. It exports `BEDROCK_ENDPOINT_TYPE` only when the profile explicitly supplies the override.
 The entrypoint resolves `.env`, the provision profile, and the image definition before constructing the stack.
 The stack receives resolved properties. It does not read environment variables or configuration files.
 `runtimeProfile` is the project selection context. Per-field context overrides are rejected; exported shell variables do not replace `.env` bindings.
@@ -306,8 +307,9 @@ The OpenCode adapter sets `OPENCODE_DISABLE_AUTOUPDATE=1` for launch and build-t
 OpenCode's updater reads global configuration; the extra config's `autoupdate: false` alone did not suppress its dialog.
 
 `OPENCODE_CONFIG=/app/opencode.json` supplies the Bedrock provider, region, and model.
-The adapter adds the startup model's native Runtime or Mantle SDK selection to `OPENCODE_CONFIG_CONTENT`.
-Other JSON settings remain intact. Native catalog routes apply to later model choices.
+Without an endpoint override, the adapter preserves native catalog routing and does not create `OPENCODE_CONFIG_CONTENT`.
+With an explicit override, it adds the startup model's SDK selection to that process-local JSON setting and retains other settings.
+Native catalog routes apply to later model choices. The image's custom Kimi entry includes its Runtime SDK metadata.
 `AWS_PROFILE=default` selects OpenCode's refreshable Node provider chain inside AgentCore.
 Without injected keys or credential files, the chain resolves the execution role.
 The launcher does not fetch IMDS credentials, export keys, or save tokens.
@@ -325,6 +327,12 @@ An explicit Mantle selection uses `amazon-bedrock`. Both use the native AWS cred
 Runtime selection disables hosted web search, which is unavailable on that endpoint.
 It forwards native argv without overriding approval policy or generating a one-time bearer token.
 The build hook installs an initial restricted permission preset. Startup preserves existing user configuration.
+Model invocation permissions do not guarantee cross-model history compatibility.
+Codex 0.163.0 replays encrypted reasoning items across model changes. Controlled Runtime tests stalled when Sol reasoning was replayed to Astra, but passed with Sol or with that reasoning item omitted.
+Fresh native Astra/Luna conversations passed. The project does not modify live Codex history or install a request-rewriting proxy.
+OpenCode's native catalog contains both Runtime and Mantle entries. Each model entry selects its SDK and endpoint; each execution role permits both paths.
+Codex has separate native providers for Runtime and Mantle. Its startup provider selects the catalog used by its model picker.
+See the [model-switch diagnosis](../src/agentcore_runtime/README.md#model-switch-diagnosis--2026-10-19) for evidence and recovery limits.
 Both images use the shared health reader. The Codex adapter has no work-event source, so it currently supplies readiness only.
 See the [runtime comparison and status evidence](../src/agentcore_runtime/README.md#opencode-and-codex-comparison) for Herdr's separate native support and remaining validation gaps.
 
@@ -336,7 +344,8 @@ New sessions use the new image. Existing processes do not restart or reload thei
 Sample roles permit Bedrock model invocation on all resources so live model selection does not need a model-ID allowlist.
 The role grants inference/discovery actions, not Bedrock administration. Account retention and service controls still apply.
 The user authorized Runtime retention `default` in Ireland and an Ireland-only exception to the managed zero-retention guard.
-The separate Mantle setting remains `none`. Profile deployment does not change those account controls.
+The user later authorized the separate Ireland Mantle setting to become `default` as well. Both Ireland account settings now use `default`.
+The managed guard's other-region rules and logging restrictions remain unchanged. Profile deployment does not change those account controls.
 CDK does not read and merge arbitrary prior IAM policies. Its declared configuration is authoritative.
 Review removals before updating. CloudFormation rollback does not create a transaction across every asset and local profile.
 A failed deployment can leave published assets or a failed stack. Inspect standard CDK/CloudFormation events before retrying.
@@ -754,6 +763,21 @@ These increments require no Cognito or Jindouyun platform dependency.
 ## Packaging and validation
 
 ### Latest verification — 2026-10-19
+
+The model-only revision rebuilt both images and passed TypeScript, 21 CDK tests, and 217 Python tests.
+Six existing sessions received stop requests. The three numbered stacks, runtimes, and roles were deleted, then recreated through official CDK.
+All new Runtime/DEFAULT endpoints reached version 1 and READY. Deployed environment variables contain no endpoint override.
+All three interactive model/role/attachment/follow-up/shell-time/stop probes passed. Both OpenCode question/activity probes and Codex sandbox checks passed.
+Cross-session 4 KiB/8 MiB file verification passed. Both OpenCode profiles called Runtime and Mantle models in fresh conversations without an endpoint setting.
+Same-conversation Kimi-to-Astra recall passed. Continuing that history with Mantle GPT-OSS failed Responses input validation; native history compatibility remains a limit.
+Six replacement interactive sessions were left connected in three tabs. Disposable probes and isolated servers were cleaned up, and final CDK diffs showed no changes.
+See the [model-only rebuild results](../src/agentcore_runtime/README.md#model-only-profile-rebuild--2026-10-19).
+
+Before the rebuild, the dual-endpoint update changed only the inference policies for all three execution roles. Each stack reached UPDATE_COMPLETE; runtime versions remained 4, 1, and 1 and all endpoints were READY.
+A separate agent changed Ireland Mantle account retention to `default`; Runtime stayed `default`, and the managed guard policy did not change.
+Both OpenCode profiles passed native Global Astra calls through Runtime and GPT-OSS 20B calls through Mantle. The Mantle Astra entry instead returned model-not-found 404 in Ireland.
+Codex Global Astra calls passed, but no successful Codex Mantle turn is claimed for this check. All disposable probe sessions received stop requests.
+TypeScript and 21 CDK tests passed. See the [dual-endpoint verification](../src/agentcore_runtime/README.md#dual-endpoint-permissions-and-ireland-retention--2026-10-19) for scope.
 
 A later all-profile verification rebuilt both ARM64 images and passed 21 CDK tests and all 212 Python tests.
 CDK deploy completed for all three numbered profiles with no changes. Runtime/DEFAULT versions remain 4 for Codex and 1 for both OpenCode profiles; all are READY.

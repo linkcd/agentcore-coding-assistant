@@ -54,6 +54,18 @@ def test_explicit_runtime_settings_take_precedence():
     assert env["BEDROCK_INFERENCE_REGION"] == "us-west-2"
 
 
+def test_automatic_model_routing_preserves_native_configuration():
+    original = (
+        '{"provider":{"amazon-bedrock":{"models":{"custom":{"provider":{"npm":"custom-sdk"}}}}}}'
+    )
+    env = assistant.launch_environment(
+        {"AWS_REGION": "eu-west-1", "BEDROCK_MODEL_ID": MODEL},
+        ("OPENCODE_CONFIG_CONTENT=" + original + "\0").encode(),
+    )
+    assert env["OPENCODE_CONFIG_CONTENT"] == original
+    assert "BEDROCK_ENDPOINT_TYPE" not in env
+
+
 @pytest.mark.parametrize(
     "endpoint_type,npm",
     [
@@ -250,8 +262,6 @@ def test_real_opencode_drives_runtime_health():
             "-e",
             f"BEDROCK_MODEL_ID={MODEL}",
             "-e",
-            "BEDROCK_ENDPOINT_TYPE=runtime",
-            "-e",
             "OPENCODE_DISABLE_MODELS_FETCH=1",
             "-e",
             "OPENCODE_DISABLE_DEFAULT_PLUGINS=1",
@@ -283,10 +293,11 @@ def test_project_model_is_registered_in_pinned_opencode(name):
         "AWS_REGION": profile["region"],
         "BEDROCK_INFERENCE_REGION": profile["inference"].get("region", profile["region"]),
         "BEDROCK_MODEL_ID": profile["inference"]["modelId"],
-        "BEDROCK_ENDPOINT_TYPE": profile["inference"]["bedrock-endpoint-type"],
         "OPENCODE_DISABLE_MODELS_FETCH": "1",
         "AWS_EC2_METADATA_DISABLED": "true",
     }
+    if "bedrock-endpoint-type" in profile["inference"]:
+        env["BEDROCK_ENDPOINT_TYPE"] = profile["inference"]["bedrock-endpoint-type"]
     command = ["docker", "run", "--rm", "--network", "none"]
     for key, value in env.items():
         command.extend(["-e", f"{key}={value}"])
@@ -309,3 +320,11 @@ def test_project_model_is_registered_in_pinned_opencode(name):
     else:
         assert model["api"]["npm"] == "@ai-sdk/amazon-bedrock"
         assert model["limit"] == {"context": 1000000, "output": 8192}
+        # The same native catalog must retain both routes without a startup override.
+        for model_id, sdk in (
+            ("global.openai.gpt-6-astra", "@ai-sdk/amazon-bedrock"),
+            ("openai.gpt-oss-20b", "@ai-sdk/amazon-bedrock/mantle"),
+        ):
+            header = "amazon-bedrock/" + model_id + "\n"
+            entry, _ = json.JSONDecoder().raw_decode(result.stdout.split(header, 1)[1].lstrip())
+            assert entry["api"]["npm"] == sdk

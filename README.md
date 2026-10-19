@@ -125,9 +125,12 @@ All Runtime regions are `eu-west-1`. Only the filesystem example needs `src/agen
 CDK resolves the account through the authenticated Toolkit. The filesystem sample uses access-point permissions without a bucket/prefix input or metadata lookup.
 The selected profile and component `.env` control deployment settings. Per-field CDK context overrides and ambient shell binding overrides are rejected or ignored, respectively.
 For the S3 example, copy `src/agentcore_runtime/.sample.env` to `src/agentcore_runtime/.env` if needed and fill its bindings. External profile directories are not supported.
-All three samples use `inference.bedrock-endpoint-type: "runtime"`.
-CDK uses this field for inference IAM and native client selection. Both startup models use global cross-Region inference from Ireland.
-Earlier Sol requests were rejected by zero-retention policy. The user later authorized an Ireland-only guard exception and set Runtime retention there to `default`. Profile deployment itself does not change retention settings.
+The sample `inference` objects contain only `modelId`. OpenCode uses its model catalog; the Codex image defaults to its native Runtime provider.
+An optional `inference.bedrock-endpoint-type` override remains available for advanced startup routing.
+Each execution role permits both Runtime and Mantle inference, independent of that startup choice.
+Both startup models use global cross-Region inference from Ireland.
+Earlier Sol requests were rejected by zero-retention policy. The user later authorized an Ireland-only guard exception and set both Runtime and Mantle retention there to `default`.
+Profile deployment itself does not change retention settings.
 Import each stack's output with `herdr-agentcore configure --cdk-outputs PATH --stack STACK_NAME` plus local connection options.
 
 ## Select, attach, detach, and stop
@@ -170,13 +173,14 @@ See the [contract README](src/runtime_contract/README.md) for fields and version
 ## Status and limits
 
 The latest verification was on 2026-10-19.
-The three numbered profiles were deployed in `eu-west-1` and READY. Codex Runtime/DEFAULT was version 4; both OpenCode runtimes were version 1.
+All three numbered profiles were destroyed and recreated in `eu-west-1` with new runtime ARNs. Every Runtime/DEFAULT endpoint reached version 1 and READY.
 These are AWS runtime versions, not assistant package or descriptor versions.
 Codex with GPT-5.6 Sol passed native Bedrock Runtime inference, sandbox checks, attachment, a context-preserving follow-up, and a real shell-tool call. Ireland Runtime retention is `default`.
 Both OpenCode profiles passed real Kimi model calls.
 The filesystem permission issue is fixed using AWS's documented directory-marker metadata procedure. Separate sessions wrote and read 4 KiB and 8 MiB files successfully.
-All three profiles passed a later CDK deploy check with no changes. Two fresh interactive sessions per profile passed real date and folder-access checks.
-See the [latest all-profile verification](src/agentcore_runtime/README.md#all-profiles-and-six-interactive-sessions--2026-10-19) and [Codex deployment results](src/agentcore_runtime/README.md#sol-on-native-bedrock-runtime--2026-10-19) for details.
+The rebuilt model-only profiles passed core interactive E2E checks, both OpenCode health probes, and cross-session storage tests.
+Two fresh interactive sessions per profile returned real date and folder-access results and were left connected. Final CDK diffs showed no changes.
+See the [latest rebuild and E2E results](src/agentcore_runtime/README.md#model-only-profile-rebuild--2026-10-19), including the observed model-history limits.
 
 Version `0.1.0` is experimental. Images pin OpenCode 1.18.30 and Codex 0.163.0; the connector pins AgentCore SDK 1.24.1.
 Herdr 0.9.5 validated all three profiles. Their descriptors were imported under their numbered profile names.
@@ -187,6 +191,10 @@ All profiles use a 900-second idle timeout and a 28,800-second compute maximum.
 The PUBLIC profiles use ephemeral coding files. The filesystem profile mounts shared coding files at `/mnt/workspace`; its home and conversation state remain ephemeral.
 OpenCode's tracked work produces `HealthyBusy`. An unanswered question can be idle when no other tracked work runs.
 Earlier cloud activity tests and current local image tests cover that bridge. Codex has readiness health only; its work-event reporter is not implemented.
+OpenCode's picker routes model entries through Runtime or Mantle. Both routes are now included in the execution-role policy; account and model-specific requirements still apply.
+Codex can stall when it replays encrypted reasoning across models. Use a fresh conversation for another model, or retain the original model for that history.
+An OpenCode Kimi-to-Astra conversation switch passed, but continuing that mixed history on Mantle GPT-OSS returned a Responses validation error. Fresh endpoint calls passed.
+See the [verified diagnosis and recovery steps](src/agentcore_runtime/README.md#model-switching-endpoint-and-history-limits).
 Health reporting does not extend the maximum lifetime or preserve files.
 Full-duration expiry and credential-rollover tests remain pending.
 

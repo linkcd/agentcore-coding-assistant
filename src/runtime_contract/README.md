@@ -75,7 +75,7 @@ Multiple stacks require explicit selection. Unrelated outputs are not copied int
 
 Descriptor version and plugin storage version are separate contracts.
 AWS runtime versions and assistant package versions are separate from both formats.
-For example, the latest verified Codex runtime is version 4, but its connection descriptor still uses version 1.
+Updating an AWS runtime can increase its runtime version without changing descriptor version 1. Recreating a deployment produces a new ARN and restarts its runtime version sequence.
 These formats are not publicly released. Internal version `1` is a validation marker, not a backward-compatibility promise.
 Runtime definitions supply explicit commands. The contract does not assume `/app/run.sh`, OpenCode, or any other launcher.
 Descriptors and profiles without `agent_kind` select an ordinary terminal, including when their command contains `opencode`.
@@ -95,7 +95,7 @@ uv build --package agentcore-contract
 
 Unit tests check validation and round trips. Repository tests enforce the three component boundaries.
 The package can build independently. It does not require either application package.
-All three current CDK output descriptors were imported successfully during the 2026-10-19 [all-profile verification](../agentcore_runtime/README.md#all-profiles-and-six-interactive-sessions--2026-10-19).
+All three replacement CDK output descriptors were imported successfully during the 2026-10-19 [model-only rebuild verification](../agentcore_runtime/README.md#model-only-profile-rebuild--2026-10-19).
 
 Repository links: [runtime publisher](../agentcore_runtime/README.md), [connector](../herdr_plugin/README.md), and [writing rules](../../agent.md#documentation-style-asd-ste100-style-english).
 These relative links refer to a full repository checkout.

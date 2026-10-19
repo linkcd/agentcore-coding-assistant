@@ -13,7 +13,7 @@ export interface RuntimeProfile {
   image: string;
   command?: string[];
   agentKind?: string | null;
-  inference: { "bedrock-endpoint-type": "runtime" | "mantle"; modelId: string; region?: string };
+  inference: { modelId: string; region?: string; "bedrock-endpoint-type"?: "runtime" | "mantle" };
   s3Files?: {
     accessPointArn: string;
     mountPath: string;
@@ -84,7 +84,8 @@ export function parseProfile(input: unknown, environment: Environment = {}): Run
         (typeof data.agentKind !== "string" || !/^[a-z][a-z0-9_-]{0,63}$/.test(data.agentKind)))) {
     throw new Error("Invalid runtime profile settings");
   }
-  if (!["runtime", "mantle"].includes(data.inference["bedrock-endpoint-type"])) {
+  if (data.inference["bedrock-endpoint-type"] !== undefined &&
+      !["runtime", "mantle"].includes(data.inference["bedrock-endpoint-type"])) {
     throw new Error('inference.bedrock-endpoint-type must be "runtime" or "mantle"');
   }
   if (data.inference.region !== undefined &&

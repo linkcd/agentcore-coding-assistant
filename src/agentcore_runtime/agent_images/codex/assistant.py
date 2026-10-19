@@ -18,6 +18,7 @@ def launch_environment(current: dict[str, str], container: bytes) -> dict[str, s
     env = inherit_settings(current, container, SETTINGS)
     if not env.get("BEDROCK_INFERENCE_REGION") or not env.get("BEDROCK_MODEL_ID"):
         raise ValueError("The runtime must define BEDROCK_INFERENCE_REGION and BEDROCK_MODEL_ID.")
+    env.setdefault("BEDROCK_ENDPOINT_TYPE", "runtime")
     if env.get("BEDROCK_ENDPOINT_TYPE") not in PROVIDERS:
         raise ValueError('BEDROCK_ENDPOINT_TYPE must be "runtime" or "mantle".')
     return env
