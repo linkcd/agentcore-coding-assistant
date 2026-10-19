@@ -14,7 +14,7 @@ import pytest
 
 from agentcore_runtime.agent_images.common import runtime
 from agentcore_runtime.agent_images.common.healthcheck import Handler
-from agentcore_runtime.agent_images.opencode import assistant
+from agentcore_runtime.agent_images.opencode import run as launcher
 
 IMAGE_CONTEXT = Path(__file__).resolve().parents[1] / "agent_images/opencode"
 COMMON = Path(__file__).resolve().parents[1] / "agent_images/common"
@@ -28,7 +28,7 @@ def test_shell_receives_deployment_settings_but_not_pid1_credentials():
         "BEDROCK_ENDPOINT_TYPE=runtime\0"
         "AWS_ACCESS_KEY_ID=synthetic\0AWS_SESSION_TOKEN=synthetic\0"
     ).encode()
-    env = assistant.launch_environment({"HOME": "/home/agent"}, container)
+    env = launcher.launch_environment({"HOME": "/home/agent"}, container)
     assert env["AWS_REGION"] == "us-west-2"
     assert env["BEDROCK_MODEL_ID"] == MODEL
     assert env["BEDROCK_ENDPOINT_TYPE"] == "runtime"
@@ -39,7 +39,7 @@ def test_shell_receives_deployment_settings_but_not_pid1_credentials():
 
 
 def test_explicit_runtime_settings_take_precedence():
-    env = assistant.launch_environment(
+    env = launcher.launch_environment(
         {
             "AWS_REGION": "us-east-1",
             "BEDROCK_MODEL_ID": MODEL,
@@ -58,7 +58,7 @@ def test_automatic_model_routing_preserves_native_configuration():
     original = (
         '{"provider":{"amazon-bedrock":{"models":{"custom":{"provider":{"npm":"custom-sdk"}}}}}}'
     )
-    env = assistant.launch_environment(
+    env = launcher.launch_environment(
         {"AWS_REGION": "eu-west-1", "BEDROCK_MODEL_ID": MODEL},
         ("OPENCODE_CONFIG_CONTENT=" + original + "\0").encode(),
     )
@@ -84,7 +84,7 @@ def test_endpoint_selection_retains_other_native_configuration(endpoint_type, np
         },
     }
     settings = ("OPENCODE_CONFIG_CONTENT=" + json.dumps(original) + "\0").encode()
-    env = assistant.launch_environment(
+    env = launcher.launch_environment(
         {
             "AWS_REGION": "eu-west-1",
             "BEDROCK_MODEL_ID": MODEL,
@@ -96,9 +96,7 @@ def test_endpoint_selection_retains_other_native_configuration(endpoint_type, np
     expected["provider"]["amazon-bedrock"]["models"][MODEL]["provider"]["npm"] = npm
     assert json.loads(env["OPENCODE_CONFIG_CONTENT"]) == expected
     current = {**env, "OPENCODE_CONFIG_CONTENT": '{"model":"user-choice"}'}
-    resolved = json.loads(
-        assistant.launch_environment(current, settings)["OPENCODE_CONFIG_CONTENT"]
-    )
+    resolved = json.loads(launcher.launch_environment(current, settings)["OPENCODE_CONFIG_CONTENT"])
     assert resolved["model"] == "user-choice"
     assert "permission" not in resolved
     assert resolved["provider"]["amazon-bedrock"]["models"][MODEL]["provider"]["npm"] == npm
@@ -111,7 +109,7 @@ def test_endpoint_selection_retains_other_native_configuration(endpoint_type, np
 )
 def test_invalid_native_configuration_fails_before_launch(config):
     with pytest.raises(ValueError, match="OPENCODE_CONFIG_CONTENT"):
-        assistant.launch_environment(
+        launcher.launch_environment(
             {
                 "AWS_REGION": "eu-west-1",
                 "BEDROCK_MODEL_ID": MODEL,
@@ -124,7 +122,7 @@ def test_invalid_native_configuration_fails_before_launch(config):
 
 def test_missing_runtime_settings_fail_before_launch():
     with pytest.raises(ValueError, match="AWS_REGION and BEDROCK_MODEL_ID"):
-        assistant.launch_environment({}, b"")
+        launcher.launch_environment({}, b"")
 
 
 def test_launch_forwards_session_argv_and_preserves_user_configuration(monkeypatch, tmp_path):
@@ -137,11 +135,11 @@ def test_launch_forwards_session_argv_and_preserves_user_configuration(monkeypat
     monkeypatch.setenv("BEDROCK_MODEL_ID", MODEL)
     monkeypatch.setenv("BEDROCK_ENDPOINT_TYPE", "runtime")
     monkeypatch.delenv("AGENTCORE_WORKDIR", raising=False)
-    monkeypatch.setattr(sys, "argv", ["launch.py", "--session", "saved-conversation"])
+    monkeypatch.setattr(sys, "argv", ["run.py", "--session", "saved-conversation"])
     chdir, execute = Mock(), Mock()
     monkeypatch.setattr(runtime.os, "chdir", chdir)
     monkeypatch.setattr(runtime.os, "execvpe", execute)
-    runtime.launch(assistant)
+    launcher.main()
     chdir.assert_called_once_with(str(tmp_path))
     executable, argv, env = execute.call_args.args
     assert executable == "opencode"
@@ -178,18 +176,15 @@ def test_packaged_runtime_configuration_matches_pinned_opencode():
         for file in (
             "Dockerfile",
             "run.sh",
-            "launch.py",
             "runtime.py",
             "healthcheck.py",
-            "LICENSE",
             "activity.py",
         )
     )
     assert all(
         (IMAGE_CONTEXT / file).is_file()
         for file in (
-            "assistant.py",
-            "NOTICE",
+            "run.py",
             "activity.mjs",
             "activity-plugin.mjs",
             "build.py",

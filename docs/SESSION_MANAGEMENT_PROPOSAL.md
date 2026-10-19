@@ -94,7 +94,7 @@ Relevant code:
 - [AWS adapter](../src/herdr_plugin/herdr_agentcore/agentcore.py): credential resolution and signing.
 - [Profile model](../src/herdr_plugin/herdr_agentcore/models.py): host credential selection and runtime target.
 - [Shared worker launcher](../src/agentcore_runtime/agent_images/common/runtime.py): environment inheritance, mount readiness, working directory, and process startup.
-- [OpenCode adapter](../src/agentcore_runtime/agent_images/opencode/assistant.py): execution-role provider selection.
+- [OpenCode launcher](../src/agentcore_runtime/agent_images/opencode/run.py): native startup and execution-role provider selection.
 - [CDK stack](../src/agentcore_runtime/cdk/runtime-stack.ts): execution-role permissions and runtime resources.
 - [Connection contract](../src/runtime_contract/README.md): versioned data between runtime publishers and connectors.
 
@@ -145,11 +145,11 @@ Later Codex tests passed a sandboxed `date` tool call and scoped isolation check
 Codex work-health, broader tool/approval cases, and long-duration behavior remain unqualified.
 Runtime infrastructure uses official AWS CDK under `cdk/`. Named provision profiles select configuration, not hardcoded assistant types.
 The saved `runtime_profile` reference is separate from the local Herdr connection profile and its recognition hint.
-The model-only profiles were destroyed and recreated on 2026-10-19. All new Runtime/DEFAULT endpoints reached version 1 and READY; final CDK diffs showed no changes.
+The model-only profiles were destroyed and recreated on 2026-10-19. A later launcher image update reached Runtime/DEFAULT version 2 and READY on all three profiles; final CDK diffs showed no changes.
 The old six sessions received stop requests. Two fresh sessions per profile returned date and folder-access results in replacement tabs and were left connected.
 The filesystem profile passed mounted startup and matching 4 KiB/8 MiB writes and reads across separate sessions.
 The separate storage probe removed its files and requested stop for its sessions. Conversation checkpoints, per-binding namespaces, and automatic recovery remain pending.
-See the [latest verification](../src/agentcore_runtime/README.md#model-only-profile-rebuild--2026-10-19) for the complete evidence, including model-history compatibility limits.
+See the [latest verification](../src/agentcore_runtime/README.md#launcher-deployment-and-e2e--2026-10-19) for the complete evidence, including model-history compatibility limits.
 `HealthyBusy` reports active work; it cannot preserve files or extend the maximum lifetime.
 
 ## 3. Identity model: what maps to what?

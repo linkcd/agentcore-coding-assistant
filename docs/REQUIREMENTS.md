@@ -166,6 +166,8 @@ Use the authenticated CDK Toolkit for account identity. Keep credentials outside
 The filesystem sample uses access-point-only permissions and requires no backing-bucket name or prefix input.
 Keep runtime modules directly under their component directory without a duplicate package folder.
 Keep root workspace configuration, the Herdr manifest, and CI in their standard locations.
+Keep project `LICENSE` and `NOTICE` sources only at the repository root. Package and image builds must include their contents without maintaining source copies in each component.
+The supplied `/app/run.sh` executes the selected image's `/app/run.py`; shared startup code is an imported helper library.
 
 ## Prototype boundaries
 
@@ -216,15 +218,16 @@ Cognito, per-user runtime authorization catalogs, DynamoDB customer registries, 
 
 ### Latest verification — 2026-10-19
 
-Both ARM64 builds, TypeScript, 21 CDK tests, and all 217 Python tests passed for the model-only profile revision.
-All three numbered profiles were destroyed and recreated with new ARNs. Every Runtime/DEFAULT endpoint reached version 1 and READY without a deployed endpoint override.
+Both ARM64 builds, TypeScript, 21 CDK tests, and all 217 Python tests passed for the launcher and root-legal-file revision.
+The image-only update reached Runtime/DEFAULT version 2 and READY on all three profiles, preserving ARNs and the absence of an endpoint override.
 All three interactive E2E flows, both OpenCode activity probes, and the Codex sandbox probe passed. Six replacement sessions returned date and folder-access results.
 Separate-session storage checks verified matching 4 KiB and 8 MiB files, then removed the probe's files and requested stop for its three sessions.
 The six user-requested interactive sessions were left open. Codex work-health and broader tool/approval cases remain unqualified.
-The rebuilt Codex deployment reached Runtime/DEFAULT version 1 with GPT-5.6 Sol on native Bedrock Runtime in Ireland.
+The updated Codex deployment reached Runtime/DEFAULT version 2 with GPT-5.6 Sol on native Bedrock Runtime in Ireland.
 Fresh sessions passed model inference, sandbox isolation, runtime-role checks, attachment, a context-preserving follow-up, and a real `date` tool call.
 Both Ireland retention settings were verified as `default`; the rebuild did not change account retention controls.
 All disposable probe sessions received stop requests. Isolated Herdr servers stopped, and all three final CDK diffs showed no changes.
+Deployed launcher and legal-file contents matched the source hashes. The first PUBLIC Kimi question wait exceeded 30 seconds; a fresh retry passed.
 See the [runtime validation record](../src/agentcore_runtime/README.md#current-validation) for exact test scope.
 
 ### Historical validation

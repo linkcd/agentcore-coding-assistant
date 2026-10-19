@@ -1,4 +1,4 @@
-"""Shared startup operations. Assistant adapters supply environment and argv."""
+"""Shared startup helpers used by each image's run.py entrypoint."""
 
 import os
 import sys
@@ -17,7 +17,7 @@ def inherit_settings(
     return env
 
 
-def launch(adapter):
+def launch(prepare_environment, build_arguments):
     try:
         container = Path("/proc/1/environ").read_bytes()
     except OSError:
@@ -26,11 +26,11 @@ def launch(adapter):
         current = inherit_settings(
             dict(os.environ), container, ("AGENTCORE_REQUIRED_MOUNT", "AGENTCORE_WORKDIR")
         )
-        env = adapter.launch_environment(current, container)
+        env = prepare_environment(current, container)
         required_mount = env.get("AGENTCORE_REQUIRED_MOUNT")
         if required_mount and not Path(required_mount).is_mount():
             raise ValueError("The configured runtime filesystem is not mounted.")
-        argv = adapter.launch_arguments(env, sys.argv[1:])
+        argv = build_arguments(env, sys.argv[1:])
         os.chdir(env.get("AGENTCORE_WORKDIR") or env.get("HOME", "/home/agent"))
         os.execvpe(argv[0], argv, env)
     except (ValueError, OSError) as exc:

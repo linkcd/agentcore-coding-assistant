@@ -45,6 +45,8 @@ Per-binding namespaces, persistent home/configuration, skill discovery, and conv
 - Preserve `.venv/`. The linked plugin uses its entrypoints.
 - Keep generated environments, build output, and caches ignored by Git.
 - Preserve licenses and attribution, including runtime-image copies.
+- Keep the project's `LICENSE` and `NOTICE` only at the repository root. Include them from there in package and image builds; do not remove third-party dependency licenses.
+- Keep `/app/run.sh` as the stable command. It executes the selected image's `run.py`. Keep shared startup helpers in `common/runtime.py`, without a separate forwarding entrypoint.
 - The `herdr/`, `agentcore-samples/`, and `agentcore-sdk-python/` research checkouts were removed. They are not dependencies.
 - Use official versioned documentation or the installed SDK for research. Keep any future reference checkout ignored and outside distributions.
 - Keep deployment inputs in repo provision profiles plus ignored `src/agentcore_runtime/.env`. Keep `.sample.env` beside it and document all three samples in the component-root README. Do not load a repository-root `.env` or external provision profile directories.
@@ -168,12 +170,13 @@ docker buildx build --platform linux/arm64 --load \
   -f src/agentcore_runtime/agent_images/common/Dockerfile \
   --build-arg ASSISTANT_DIR=opencode --build-arg NPM_PACKAGE=opencode-ai \
   --build-arg NPM_VERSION=1.18.30 --build-arg EXECUTABLE=opencode \
-  -t herdr-agentcore-local:1.18.30 src/agentcore_runtime/agent_images
+  -t herdr-agentcore-local:1.18.30 .
 HERDR_RUNTIME_TEST_IMAGE=herdr-agentcore-local:1.18.30 \
   uv run --frozen pytest src/agentcore_runtime/tests/test_runtime_image.py -q --tb=short
 ```
 
-The Docker tests verify configuration, native startup, real OpenCode activity, and crash cleanup.
+The Docker tests verify configuration, native startup, root legal-file contents, real OpenCode activity, and crash cleanup.
+Build from the repository-root context. The root `.dockerignore` restricts local builds; CDK additionally stages only the selected adapter and shared image sources.
 The activity container has no network access and makes no model calls.
 The image build preloads the plugin SDK so the default home works offline.
 Running OpenCode processes need a restart to load a changed plugin.
@@ -213,8 +216,11 @@ Reject known update dialogs before sending model prompts. Wait for detached pane
 These results are dated observations. Recheck live state before acting on a deployment or session.
 AWS runtime versions, assistant package versions, and descriptor version 1 are separate values.
 
+- The launcher cleanup is deployed: `run.sh` → selected image `run.py` → native CLI. Shared helpers remain in `common/runtime.py`; the extra forwarding entrypoint was removed. All three stacks are UPDATE_COMPLETE and Runtime/DEFAULT version 2 is READY. The diffs changed only images, preserving ARNs and connection commands. Two image assets serve the three profiles.
+- Project legal sources exist only as root `LICENSE` and `NOTICE`. Python source distributions include them at their root; wheels include them in `.dist-info/extra_metadata/`. Docker copies them into `/app`. Root-context CDK staging is allowlisted and excludes deployment data and the unselected adapter. Both ARM64 builds, 21 CDK tests, 217 Python tests, and direct/sdist-based package builds passed. Fresh cloud sessions verified the exact deployed source/legal-file hashes and absence of obsolete entrypoints.
+- Version-2 isolated Herdr E2E passed for all profiles: model, role, recognition, detach/attachment, context follow-up, shell time, and stop. Codex sandbox, both OpenCode health probes, both OpenCode Runtime/Mantle calls, and cross-session 4 KiB/8 MiB storage checks passed. One PUBLIC Kimi question wait exceeded 30 seconds; a fresh retry passed. All disposable sessions received stop requests, isolated servers stopped, and probe files were removed. Final CDK diffs were clean and both Ireland retention modes stayed `default`. Existing user sessions were not replaced; new sessions use version 2.
 - The user authorized a complete rebuild of the three numbered profiles after removing the mandatory endpoint field. Each sample now contains only `inference.modelId`; Codex defaults to Runtime in its image, and OpenCode uses catalog metadata. An explicit advanced endpoint override remains optional. No sample deployment exports `BEDROCK_ENDPOINT_TYPE`.
-- The six former user sessions were detached and received stop requests. Official CDK destroy deleted the three old stacks, and direct reads confirmed their runtimes and roles absent. The same stack names were recreated with new runtime ARNs; all Runtime/DEFAULT endpoints are version 1 and READY. The three saved numbered profiles were replaced from fresh outputs. Shared VPC, S3 Files, and bootstrap resources were preserved.
+- During the earlier model-only rebuild, six former user sessions were detached and received stop requests. Official CDK destroy deleted the three old stacks, and direct reads confirmed their runtimes and roles absent. The same stack names were recreated with new runtime ARNs and reached Runtime/DEFAULT version 1 and READY. The three saved numbered profiles were replaced from fresh outputs. Shared VPC, S3 Files, and bootstrap resources were preserved.
 - Both rebuilt ARM64 images, TypeScript, 21 CDK tests, and 217 Python tests passed. All three core interactive E2E flows passed, including credentials, attachment, context follow-up, real `date`, and stop. Both OpenCode question/activity/process-death probes and the Codex sandbox probe passed. A smoke matcher now accepts whitespace after `RESUMED:`; its live rerun passed.
 - Fresh OpenCode Runtime and Mantle calls passed on both profiles without an endpoint override. Same-conversation Kimi-to-Astra recall passed. Continuing that mixed history with GPT-OSS 20B through Mantle returned HTTP 400 Responses input validation. Codex simple-text switching passed; its encrypted-history limitation remains. Do not claim universal seamless cross-model history compatibility.
 - Cross-session 4 KiB/8 MiB persistence passed, with probe files removed. All disposable sessions received stop requests and isolated servers stopped. Six new user sessions were opened in three replacement tabs and left connected after date/folder checks. One Kimi turn produced no final answer after about 132 seconds; a shorter follow-up succeeded. Discover current sessions before further operations. Final CDK diffs showed no changes, and both Ireland retention settings remained `default`.

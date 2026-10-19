@@ -255,8 +255,8 @@ See the [existing-runtime guide](CONNECT_EXISTING_RUNTIME.md) for registration a
 
 Standard `cdk deploy` deploys the named runtime settings independently of the connector.
 The supplied OpenCode and Codex images adapt `awslabs/agentcore-samples`.
-The repository and Python packages contain Apache-2.0 license files.
-Runtime sources contain `agent_images/common/LICENSE` and the OpenCode adapter's `NOTICE`. Preserve existing license and attribution files.
+The repository keeps one Apache-2.0 `LICENSE` and one `NOTICE` at its root.
+Python package builds bundle those files in their distributions. Docker builds copy them into `/app`.
 No research checkout, GitHub gateway, or shared sample deployment file is required.
 
 ### Deployment sequence
@@ -298,8 +298,10 @@ Deployment does not create an assistant session. The new-agent action does that.
 The image defaults to OpenCode 1.18.30 and checks its installed version during build.
 Its HTTP service runs as an unprivileged user.
 All supplied profiles use `agent_images/common/Dockerfile` with explicit npm package/version, executable, and adapter directory arguments.
-CDK stages shared files and the selected adapter only; another adapter's changes do not invalidate this image asset.
-The shared `/app/run.sh` executes `launch.py`, which uses `/app/assistant.py` for environment and argument preparation.
+The build context is the repository root. CDK includes root legal files, shared image files, and the selected adapter only.
+Another adapter's changes do not invalidate this image asset. Deployment bindings and other components are excluded.
+The shared `/app/run.sh` executes `/app/run.py`, copied from the selected image's directory.
+That entrypoint imports `runtime.py` helpers for environment inheritance, mount checks, working-directory selection, and native process execution.
 The OpenCode adapter forwards native argv, including `--session`. The common launcher selects `AGENTCORE_WORKDIR` or the image home.
 It preserves user configuration and does not grant automatic tool approval.
 
@@ -764,6 +766,13 @@ These increments require no Cognito or Jindouyun platform dependency.
 
 ### Latest verification — 2026-10-19
 
+The launcher and root-legal-file image update reached Runtime/DEFAULT version 2 and READY on all three stacks, with unchanged ARNs.
+Cloud source-hash checks verified `run.sh`, the selected `run.py`, shared helpers, and copies of the two root legal files. Obsolete entrypoints were absent.
+All three isolated interactive flows passed, including attachment, context follow-up, role checks, shell time, and stop.
+Codex sandbox, both OpenCode health flows, fresh Runtime/Mantle calls on both OpenCode profiles, and cross-session S3 file tests passed.
+The first PUBLIC OpenCode question wait timed out at 30 seconds; a fresh retry passed. All disposable test resources were cleaned up and final CDK diffs showed no changes.
+See the [launcher deployment results](../src/agentcore_runtime/README.md#launcher-deployment-and-e2e--2026-10-19). Native cross-model history limits remain.
+
 The model-only revision rebuilt both images and passed TypeScript, 21 CDK tests, and 217 Python tests.
 Six existing sessions received stop requests. The three numbered stacks, runtimes, and roles were deleted, then recreated through official CDK.
 All new Runtime/DEFAULT endpoints reached version 1 and READY. Deployed environment variables contain no endpoint override.
@@ -844,7 +853,8 @@ Community discovery uses the `herdr-plugin` topic. Publication and official endo
 
 Code and tests live inside the three `src/` components. Each has a README and package metadata.
 Each Python wheel includes only its component. CDK and image sources are not Python wheels.
-Each Python source distribution includes its component code, tests, README, and applicable licenses. Runtime infrastructure has no Python distribution.
+Each Python source distribution includes its component code, tests, README, and root copies of `LICENSE` and `NOTICE`. Runtime infrastructure has no Python distribution.
+Hatch includes those legal files under each wheel's `.dist-info/extra_metadata/` directory. Both direct wheel builds and wheels built from source distributions use the same root texts.
 Root architecture documents and the Herdr manifest remain repository-level files.
 See the [plugin review](PLUGIN_GUIDELINES_REVIEW.md).
 

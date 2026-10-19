@@ -1,9 +1,0 @@
-node_modules
-cdk.out
-cdk.context.json
-cdk-outputs*.json
-tests
-*.connection.json
-.env*
-**/__pycache__
-**/*.pyc

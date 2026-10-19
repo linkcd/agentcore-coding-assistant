@@ -52,9 +52,9 @@ src/agentcore_runtime/
     opencode-agentcore-profile-2.json
     opencode-s3filesystem-agentcore-profile-3.json
   agent_images/
-    common/              Shared Dockerfile, startup, health, and license
-    opencode/            image.json, adapter, model catalog, and work-event plugin
-    codex/               image.json, adapter, sandbox configuration, and build hook
+    common/              Shared Dockerfile, run.sh, startup helpers, and health
+    opencode/            image.json, run.py, model catalog, and work-event plugin
+    codex/               image.json, run.py, sandbox configuration, and build hook
   tests/                 Python and JavaScript runtime checks and live probes
 ```
 
@@ -77,24 +77,38 @@ No custom Boto3 create/update deployment loop is used.
 
 ## Shared image structure
 
-All supplied profiles use `agent_images/` as the build context and `common/Dockerfile` within that context.
+All supplied profiles use the repository root as the Docker build context so builds can include the root `LICENSE` and `NOTICE`.
+The Dockerfile is `src/agentcore_runtime/agent_images/common/Dockerfile` relative to that context.
 The Dockerfile is a shared build template. Each build installs one assistant and produces a separate image.
 The profile's `image` reference selects `agent_images/NAME/image.json`.
-That definition declares the Dockerfile, package/version build arguments, executable, launch command, and Herdr hint.
+That definition declares the Dockerfile relative to `agent_images/`, package/version build arguments, executable, launch command, and Herdr hint.
 CDK derives `ASSISTANT_DIR` from the image reference. The definition must not repeat it.
-CDK stages only `common/` and the selected adapter directory. Changes to another adapter do not change this image asset.
+CDK stages the root legal files and `.dockerignore`, plus `common/` and the selected adapter directory under their source paths.
+Other components, deployment bindings, caches, and the unselected adapter are excluded. Changes to another adapter do not change this image asset.
 
 The shared image installs the common coding tools and checks the installed assistant version.
-It copies shared files to `/app`, then adds the selected adapter as `/app/assistant.py`.
-The shared `/app/run.sh` calls `/app/launch.py`, which delegates to that adapter.
+It copies the root legal files and shared helpers to `/app`, then adds the selected image's `run.py`.
+The shared `/app/run.sh` executes `/app/run.py`. That Python entrypoint starts OpenCode or Codex with the shared helpers.
 The health server remains the container's default process.
 
-Both adapter directories contain `assistant.py`, Python module metadata, and `image.json`.
-The shared image sources include `common/LICENSE`. The OpenCode adapter also retains its upstream `NOTICE`.
-An adapter supplies the non-secret environment allowlist, required settings, and launch arguments.
-The common launcher uses `AGENTCORE_WORKDIR` when supplied, otherwise the image's home directory.
-Shared code reads PID 1 settings, preserves explicit values, changes directory, handles startup errors, and replaces the launcher process.
-Neither adapter writes credentials or overwrites user configuration.
+```text
+/app/run.sh → /app/run.py → opencode or codex
+```
+
+| File | Purpose |
+| --- | --- |
+| [common/run.sh](agent_images/common/run.sh) | Stable command used by the connector. It forwards arguments to `run.py`. |
+| [opencode/run.py](agent_images/opencode/run.py) | OpenCode startup settings and executable entrypoint. Copied to `/app/run.py` in that image. |
+| [codex/run.py](agent_images/codex/run.py) | Codex startup settings and executable entrypoint. Copied to `/app/run.py` in that image. |
+| [common/runtime.py](agent_images/common/runtime.py) | Imported helpers for environment inheritance, mount checks, working directory, and process execution. |
+
+Both adapter directories contain `run.py`, Python module metadata, and `image.json`.
+Maintain [LICENSE](../../LICENSE) and [NOTICE](../../NOTICE) only at the repository root. Docker copies them into `/app` during the build.
+The three profiles use two images: one Codex image and one shared OpenCode image. Profile directories contain no legal-file copies.
+Each `run.py` supplies the non-secret environment allowlist, required settings, and native arguments.
+The shared helper uses `AGENTCORE_WORKDIR` when supplied, otherwise the image's home directory.
+It reads PID 1 settings, preserves explicit values, handles startup errors, and replaces the launcher process.
+Neither launcher writes credentials or overwrites user configuration.
 
 Optional files reflect real assistant requirements. OpenCode needs `opencode.json`, an event plugin, and a build-time plugin-dependency warmup.
 Codex uses native CLI configuration arguments and a native permission preset.
@@ -110,7 +124,7 @@ The names below refer to the supplied settings. Other named profiles can reuse e
 | --- | --- | --- |
 | Infrastructure | Shared official CDK stack, ARM64 Docker asset, IAM role, and outputs. | Same. |
 | Build and startup | Shared Dockerfile, tools, user, entrypoint, environment inheritance, and error handling. | Same. |
-| Assistant adapter | `agent_images/opencode/assistant.py`. | `agent_images/codex/assistant.py`. |
+| Python launcher | `agent_images/opencode/run.py`. | `agent_images/codex/run.py`. |
 | Package/version | `opencode-ai` 1.18.30. | `@openai/codex` 0.163.0. |
 | Inference | The selected model's catalog metadata chooses the native endpoint and SDK. An advanced startup override is optional. | The image defaults to native Bedrock Runtime. An optional override selects Mantle. |
 | Model authentication | Refreshable execution-role provider; no exported snapshot. | Native AWS credential chain; no generated bearer-token snapshot. |
@@ -622,6 +636,31 @@ The provision profiles' startup models were not changed for that live selection.
 
 The latest completed verification is dated 2026-10-19. Runtime versions, assistant package versions, and descriptor version 1 are separate values.
 The dated results record observations, not a live session inventory. Check current state before later operations.
+
+### Launcher deployment and E2E — 2026-10-19
+
+The startup path is now `run.sh` → image-specific `run.py` → the native assistant.
+The separate forwarding entrypoint was removed. Shared startup helpers remain in `common/runtime.py`.
+The repository contains one `LICENSE` and one `NOTICE`, both at its root. Image and package builds include those texts from the root sources.
+Docker now uses the repository-root context with an allowlist. CDK staging additionally excludes the unselected adapter and all deployment bindings.
+Both ARM64 image builds, TypeScript, 21 CDK tests, and 217 Python tests passed.
+Python source distributions, wheels built from those distributions, and direct wheel builds passed legal-file content checks.
+The two image assets were then deployed to all three existing profile stacks. Each reviewed diff changed only the runtime image reference.
+All stacks reached `UPDATE_COMPLETE`. Every Runtime and `DEFAULT` endpoint reached version 2 and `READY`; runtime ARNs and connection commands were unchanged.
+
+Fresh-session cloud checks passed:
+
+1. All three deployed images matched the source hashes for `run.sh`, the selected `run.py`, `runtime.py`, `LICENSE`, and `NOTICE`. The obsolete entrypoints and endpoint override were absent.
+2. All three isolated Herdr flows passed default selection, native recognition, a real model response, runtime-role inspection, detach/attachment, context follow-up, a real `date` tool, and the stop action.
+3. Codex passed its native sandbox and model-driven shell-tool checks.
+4. Both OpenCode profiles passed work/busy, question/wait/idle, reply/busy, completion/idle, and process-death health checks. The PUBLIC profile's first question wait exceeded 30 seconds; a fresh-session retry passed.
+5. Both OpenCode profiles returned real responses from Global Astra through Runtime and GPT-OSS 20B through Mantle.
+6. The S3 Files profile passed 4 KiB and 8 MiB writes in one session and matching reads in another. Cleanup removed the probe's files.
+
+Every disposable probe session received a stop request, and all isolated Herdr servers stopped.
+Final CDK diffs showed no changes. Both Ireland account retention settings remained `default`.
+New sessions use the updated images. Existing user sessions were not replaced as part of this update.
+The earlier cross-model history limitations remain; this update changes launcher structure and packaging, not the native model clients.
 
 ### Model-only profile rebuild — 2026-10-19
 

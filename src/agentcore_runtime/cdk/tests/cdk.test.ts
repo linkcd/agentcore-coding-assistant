@@ -189,18 +189,27 @@ test("both OpenCode profiles share one image and exclude deployment data from as
     const definition = loadImage(profile.image);
     assert.equal(definition.file, "common/Dockerfile");
     assert.ok(!("ASSISTANT_DIR" in definition.buildArgs));
-    assert.ok(fs.existsSync(path.join(IMAGE_DIRECTORY, profile.image, "assistant.py")));
+    assert.ok(fs.existsSync(path.join(IMAGE_DIRECTORY, profile.image, "run.py")));
     const app = new App();
     new RuntimeStack(app, profile.stackName, {
       account: "123456789012", profileName: name, profile, imageDefinition: definition,
     });
     const assembly = app.synth();
+    const imagePath = path.relative(REPOSITORY_ROOT, IMAGE_DIRECTORY);
     const staged = fs.readdirSync(assembly.directory).map((entry) => path.join(assembly.directory, entry))
-      .find((entry) => fs.existsSync(path.join(entry, "common", "Dockerfile")));
+      .find((entry) => fs.existsSync(path.join(entry, imagePath, "common", "Dockerfile")));
     assert.ok(staged);
-    assert.ok(fs.existsSync(path.join(staged, profile.image, "image.json")));
-    assert.ok(!fs.existsSync(path.join(staged, profile.image === "opencode" ? "codex" : "opencode")));
+    const stagedImages = path.join(staged, imagePath);
+    assert.ok(fs.existsSync(path.join(stagedImages, profile.image, "image.json")));
+    assert.ok(fs.existsSync(path.join(stagedImages, profile.image, "run.py")));
+    assert.ok(!fs.existsSync(path.join(stagedImages, profile.image === "opencode" ? "codex" : "opencode")));
+    for (const legal of ["LICENSE", "NOTICE"]) {
+      assert.deepEqual(fs.readFileSync(path.join(staged, legal)), fs.readFileSync(path.join(REPOSITORY_ROOT, legal)));
+    }
     for (const excluded of ["node_modules", "provision_profiles", "cdk", ".env", ".sample.env"]) {
+      assert.ok(!fs.existsSync(path.join(staged, "src", "agentcore_runtime", excluded)));
+    }
+    for (const excluded of [".git", ".venv", "README.md", "src/herdr_plugin", "src/runtime_contract"]) {
       assert.ok(!fs.existsSync(path.join(staged, excluded)));
     }
     if (profile.image === "opencode") imageSources.push(path.basename(staged));

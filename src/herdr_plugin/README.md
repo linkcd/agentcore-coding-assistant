@@ -115,6 +115,8 @@ Adding the numbered profiles preserves an older saved default. Use an explicit l
 
 ## Latest verification — 2026-10-19
 
+The launcher image update reached Runtime/DEFAULT version 2 and READY on all three profiles. ARNs and the `/app/run.sh` connection command stayed unchanged.
+Fresh isolated model, role, detach/attachment, follow-up, shell-tool, and stop flows passed on the updated images.
 After the model-only profile rebuild, all three numbered descriptors were replaced with new runtime ARNs. Two independent sessions per profile opened in three replacement tabs.
 All six passed native recognition and returned real date and folder-access results.
 The user-requested sessions were left open. They are not disposable probe sessions; check live state before any later operation.
@@ -136,6 +138,8 @@ To replace a valid descriptor's command, add `--command` and the complete replac
 The command must already exist in the selected runtime. Registration does not install it.
 
 ## Checks
+
+The repository root owns `LICENSE` and `NOTICE`. Hatch bundles them into source distributions and wheel metadata without component-local source copies.
 
 Run from the repository root:
 

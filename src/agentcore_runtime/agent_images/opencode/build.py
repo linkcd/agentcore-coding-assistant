@@ -3,7 +3,7 @@
 import os
 import subprocess
 
-from assistant import launch_arguments, launch_environment
+from run import launch_arguments, launch_environment
 
 env = launch_environment(
     {

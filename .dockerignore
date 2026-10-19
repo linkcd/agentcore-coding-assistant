@@ -1,0 +1,19 @@
+# Build from the repository root, with only image sources and legal files.
+**
+!LICENSE
+!NOTICE
+!src/
+src/*
+!src/agentcore_runtime/
+src/agentcore_runtime/*
+!src/agentcore_runtime/agent_images/
+!src/agentcore_runtime/agent_images/**
+**/node_modules
+**/cdk.out
+**/tests
+**/.env*
+**/*.connection.json
+**/cdk.context.json
+**/cdk-outputs*.json
+**/__pycache__
+**/*.pyc

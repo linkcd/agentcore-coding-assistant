@@ -1,8 +1,9 @@
 import { ArnFormat, CfnOutput, Stack, StackProps, Tags, aws_bedrockagentcore as agentcore,
   aws_ecr_assets as assets, aws_iam as iam } from "aws-cdk-lib";
 import { Construct } from "constructs";
+import * as path from "node:path";
 import { connectionDescriptor, validateCommand } from "../../runtime_contract/connection";
-import { RuntimeProfile } from "./profile";
+import { REPOSITORY_ROOT, RuntimeProfile } from "./profile";
 import { AgentImage, IMAGE_DIRECTORY } from "./image";
 
 export interface RuntimeProps extends Omit<StackProps, "env" | "stackName"> {
@@ -22,13 +23,18 @@ export class RuntimeStack extends Stack {
     const { runtimeName } = props.profile;
     const { modelId } = props.profile.inference;
 
-    const generated = ["node_modules", "cdk.out", "tests", "**/__pycache__", "**/*.pyc"];
+    const generated = ["**/node_modules", "**/cdk.out", "**/tests", "**/__pycache__", "**/*.pyc",
+      "**/.env*", "**/*.connection.json", "**/cdk.context.json", "**/cdk-outputs*.json"];
     const directory = props.profile.image;
+    const imagePath = path.relative(REPOSITORY_ROOT, IMAGE_DIRECTORY);
     // The image reference is the only source for its adapter directory.
-    const exclude = ["**", "!common", "!common/**", `!${directory}`, `!${directory}/**`, ...generated];
+    const exclude = ["**", "!.dockerignore", "!LICENSE", "!NOTICE", "!src", "src/*",
+      "!src/agentcore_runtime", "src/agentcore_runtime/*", `!${imagePath}`, `${imagePath}/*`,
+      `!${imagePath}/common`, `!${imagePath}/common/**`,
+      `!${imagePath}/${directory}`, `!${imagePath}/${directory}/**`, ...generated];
     const image = new assets.DockerImageAsset(this, "AssistantImage", {
-      directory: IMAGE_DIRECTORY,
-      file: definition.file,
+      directory: REPOSITORY_ROOT,
+      file: path.join(imagePath, definition.file),
       platform: assets.Platform.LINUX_ARM64, // AgentCore microVM container architecture.
       buildArgs: { ...definition.buildArgs, ASSISTANT_DIR: directory },
       exclude,

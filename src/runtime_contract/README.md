@@ -86,6 +86,8 @@ Never silently replace a missing runtime target or launch command.
 
 ## Checks and related documents
 
+The repository root owns `LICENSE` and `NOTICE`. Hatch bundles them into source distributions and wheel metadata without component-local source copies.
+
 Run from the repository root:
 
 ```bash

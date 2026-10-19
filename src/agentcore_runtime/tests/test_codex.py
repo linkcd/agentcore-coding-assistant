@@ -9,7 +9,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from agentcore_runtime.agent_images.codex import assistant
+from agentcore_runtime.agent_images.codex import run as launcher
 from agentcore_runtime.agent_images.common import runtime
 
 
@@ -29,7 +29,7 @@ def test_native_sandbox_profile_keeps_workspace_writes_without_full_root_access(
 
 
 def test_codex_only_inherits_nonsecret_runtime_settings():
-    env = assistant.launch_environment(
+    env = launcher.launch_environment(
         {},
         b"AWS_REGION=us-west-2\0BEDROCK_INFERENCE_REGION=us-east-2\0BEDROCK_MODEL_ID=openai.gpt-5.5\0"
         b"BEDROCK_ENDPOINT_TYPE=mantle\0AWS_SECRET_ACCESS_KEY=synthetic\0",
@@ -59,11 +59,11 @@ def test_codex_launch_preserves_user_config_and_native_arguments(
     if endpoint_type is not None:
         monkeypatch.setenv("BEDROCK_ENDPOINT_TYPE", endpoint_type)
     monkeypatch.setattr(Path, "read_bytes", lambda _: b"")
-    monkeypatch.setattr(sys, "argv", ["launch.py", "--version"])
+    monkeypatch.setattr(sys, "argv", ["run.py", "--version"])
     execute = Mock()
     monkeypatch.setattr(runtime.os, "execvpe", execute)
     monkeypatch.setattr(runtime.os, "chdir", Mock())
-    runtime.launch(assistant)
+    launcher.main()
     executable, argv, env = execute.call_args.args
     assert executable == "codex" and argv[-1] == "--version"
     assert f'model_provider="{provider}"' in argv

@@ -14,8 +14,9 @@ RUN test -n "$NPM_PACKAGE" && test -n "$NPM_VERSION" && test -n "$EXECUTABLE" \
 RUN useradd --create-home --home-dir /home/agent --uid 1000 agent
 ARG ASSISTANT_DIR
 RUN test -n "$ASSISTANT_DIR"
-COPY common/ /app/
-COPY ${ASSISTANT_DIR}/ /app/
+COPY LICENSE NOTICE /app/
+COPY src/agentcore_runtime/agent_images/common/ /app/
+COPY src/agentcore_runtime/agent_images/${ASSISTANT_DIR}/ /app/
 RUN chmod 755 /app/run.sh
 ENV HOME=/home/agent
 USER agent

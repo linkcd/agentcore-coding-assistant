@@ -57,7 +57,7 @@ pyproject.toml          Packaging and tooling
 uv.lock                 Locked dependencies
 README.md               Goal, setup, and usage
 AGENTS.md, agent.md      Coding-agent instructions
-LICENSE                 Repository license; component licenses and image attribution live under src/
+LICENSE, NOTICE         Root-only project license and attribution sources
 .github/workflows/      CI configuration
 src/agentcore_runtime/  Assistant definitions, deployment, README, and tests
 src/herdr_plugin/       Connector, README, and tests
@@ -70,6 +70,8 @@ It also excludes user deployment/configuration files.
 No upstream source checkout is needed to build, link, or run the plugin.
 
 The connector and Python contract build separate wheels and source distributions.
+Both builds include the root `LICENSE` and `NOTICE`. Source components do not keep duplicate legal files.
+Wheels store the files under `.dist-info/extra_metadata/`; source distributions include them at their root for standalone wheel builds.
 Infrastructure uses official CDK constructs and has no custom provisioning executable.
 Runtime assets do not enter the connector wheel. Named settings feed explicit connection data to the connector.
 Root design documents remain in the repository. Component README links to them refer to a full checkout.
@@ -93,12 +95,14 @@ npm test --prefix src/agentcore_runtime/cdk
 ```
 
 The current layout has Python, CDK assertion, image, and named-profile checks.
+The latest image-only update reached Runtime/DEFAULT version 2 and READY on all three profiles. Fresh isolated E2E flows, deployed source-content checks, health, sandbox, and storage probes passed.
+The PUBLIC OpenCode question probe passed on a fresh retry after its first 30-second wait timed out. Test sessions and servers were cleaned up.
 The model-only profile revision passed both ARM64 builds, 21 CDK tests, and all 217 Python tests.
 All three numbered stacks were destroyed and recreated. Their new descriptors replaced the saved numbered connection profiles; final CDK diffs showed no changes.
 Six replacement user sessions returned date and folder-access results in three tabs and were left connected.
 Isolated probes on all three profiles passed new, recognition, attachment, follow-up, shell-tool, and stop operations. Both OpenCode health probes and the Codex sandbox probe passed.
 The filesystem profile also passed a separate cross-session file probe; its temporary files and sessions were cleaned up.
-See the [current runtime results](../src/agentcore_runtime/README.md#current-validation) for deployment versions and validation limits.
+See the [current runtime results](../src/agentcore_runtime/README.md#launcher-deployment-and-e2e--2026-10-19) for deployment versions and validation limits.
 Independent connector/contract distributions and descriptor import have validation coverage. The CDK project has separate assertion tests.
 A connector-only production installation excludes the runtime-definition package.
 Earlier connector revisions imported CDK outputs and passed cloud model/activity/attachment tests.

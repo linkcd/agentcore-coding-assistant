@@ -1,5 +1,6 @@
 """Shared startup handles both adapters without assistant-specific branches."""
 
+import hashlib
 import os
 import subprocess
 import sys
@@ -8,9 +9,9 @@ from unittest.mock import Mock
 
 import pytest
 
-from agentcore_runtime.agent_images.codex import assistant as codex
+from agentcore_runtime.agent_images.codex import run as codex
 from agentcore_runtime.agent_images.common import runtime
-from agentcore_runtime.agent_images.opencode import assistant as opencode
+from agentcore_runtime.agent_images.opencode import run as opencode
 
 
 def test_only_allowed_settings_cross_the_pid1_boundary():
@@ -32,12 +33,12 @@ def test_shared_launch_preserves_arguments_cwd_and_configuration(monkeypatch, tm
     monkeypatch.setenv("BEDROCK_INFERENCE_REGION", "us-east-2")
     monkeypatch.setenv("BEDROCK_ENDPOINT_TYPE", "runtime")
     arguments = ["--session", "a b;literal"]
-    monkeypatch.setattr(sys, "argv", ["launch.py", *arguments])
+    monkeypatch.setattr(sys, "argv", ["run.py", *arguments])
     monkeypatch.setattr(Path, "read_bytes", Mock(side_effect=PermissionError))
     execute, chdir = Mock(), Mock()
     monkeypatch.setattr(runtime.os, "execvpe", execute)
     monkeypatch.setattr(runtime.os, "chdir", chdir)
-    runtime.launch(adapter)
+    adapter.main()
     executable, argv, env = execute.call_args.args
     assert argv[0] == executable
     assert argv[-2:] == arguments
@@ -51,7 +52,7 @@ def test_invalid_environment_never_executes_a_program(monkeypatch):
     execute = Mock()
     monkeypatch.setattr(runtime.os, "execvpe", execute)
     with pytest.raises(SystemExit):
-        runtime.launch(opencode)
+        opencode.main()
     execute.assert_not_called()
 
 
@@ -70,7 +71,7 @@ def test_invalid_endpoint_override_never_launches(monkeypatch, adapter, endpoint
     execute = Mock()
     monkeypatch.setattr(runtime.os, "execvpe", execute)
     with pytest.raises(SystemExit):
-        runtime.launch(adapter)
+        adapter.main()
     execute.assert_not_called()
 
 
@@ -116,11 +117,11 @@ def test_configured_mount_must_be_ready_before_launch(monkeypatch, mounted):
     execute = Mock()
     monkeypatch.setattr(runtime.os, "execvpe", execute)
     if mounted:
-        runtime.launch(opencode)
+        opencode.main()
         assert execute.call_args.args[2]["AGENTCORE_REQUIRED_MOUNT"] == "/mnt/workspace"
     else:
         with pytest.raises(SystemExit):
-            runtime.launch(opencode)
+            opencode.main()
         execute.assert_not_called()
 
 
@@ -129,8 +130,18 @@ def test_both_images_run_the_shared_health_contract_without_an_assistant(image_v
     image = os.environ.get(image_variable)
     if not image:
         pytest.skip(f"Set {image_variable} for the container health check")
-    script = """
-import json, subprocess, time, urllib.request
+    root = Path(__file__).resolve().parents[3]
+    legal_hashes = {
+        name: hashlib.sha256((root / name).read_bytes()).hexdigest()
+        for name in ("LICENSE", "NOTICE")
+    }
+    script = (
+        f"legal_hashes = {legal_hashes!r}\n"
+        + """
+import hashlib, json, subprocess, time, urllib.request
+from pathlib import Path
+for name, expected in legal_hashes.items():
+    assert hashlib.sha256((Path('/app') / name).read_bytes()).hexdigest() == expected
 server = subprocess.Popen(['python3.11', '/app/healthcheck.py'])
 try:
     deadline = time.monotonic() + 10
@@ -151,6 +162,7 @@ finally:
     server.terminate()
     server.wait(timeout=5)
 """
+    )
     result = subprocess.run(
         ["docker", "run", "--rm", "--network", "none", image, "python3.11", "-c", script],
         capture_output=True,

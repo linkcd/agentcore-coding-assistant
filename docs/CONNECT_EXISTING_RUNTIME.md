@@ -264,11 +264,12 @@ The local `stopped` label means the API accepted the request; there is no stop-c
 
 ### Verified current examples — 2026-10-19
 
-The three model-only profiles were destroyed and redeployed with new runtime ARNs. Every runtime and `DEFAULT` endpoint reached version 1 and READY.
+The three model-only profiles were recreated with new runtime ARNs, then updated with the simplified launcher images. Every runtime and `DEFAULT` endpoint reached version 2 and READY.
 The numbered saved profiles were replaced from the new CDK outputs. Two independent sessions per profile opened in three replacement Herdr tabs and returned date and folder-access results.
 The filesystem sessions used the shared `/mnt/workspace` mount; the PUBLIC sessions used runtime-local home directories.
 Those six user-requested sessions were left open. The separate disposable verification probes stopped their own sessions.
-See the [rebuild verification](../src/agentcore_runtime/README.md#model-only-profile-rebuild--2026-10-19) for storage checks and model-history limits.
+Fresh isolated E2E checks passed on the version-2 images. Existing user sessions retain their own image revision; new sessions use the updated deployment.
+See the [launcher deployment verification](../src/agentcore_runtime/README.md#launcher-deployment-and-e2e--2026-10-19) for storage checks and model-history limits.
 
 ### Adaptation cases
 
@@ -282,9 +283,9 @@ See the [rebuild verification](../src/agentcore_runtime/README.md#model-only-pro
 | Recovery needed after compute termination | Implement persistent files and application-state recovery separately. |
 
 `/app/run.sh` comes from the AWS OpenCode sample and is also supplied by this project's OpenCode definition.
-It is not an AgentCore or Herdr requirement. In our images, it starts the shared launcher, then the selected image's assistant adapter.
+It is not an AgentCore or Herdr requirement. In our images, it executes `/app/run.py`, the selected assistant's Python launcher.
 The container's default process is the health service, not this assistant launcher.
-See the [sample attribution](../src/agentcore_runtime/agent_images/opencode/NOTICE).
+See the [launcher source map](../src/agentcore_runtime/README.md#shared-image-structure) and root [sample attribution](../NOTICE).
 
 For a sample launcher that exports a static credential snapshot, ask its owner to supply a refreshable startup path or a reviewed wrapper command.
 The connector does not implement that runtime-specific repair. Reattachment cannot change an already-running process's environment.

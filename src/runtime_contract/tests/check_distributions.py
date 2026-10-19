@@ -56,10 +56,14 @@ def check_documents(root):
     for prefix, count in {"F": 18, "L": 12, "P": 7, "H": 10, "C": 9}.items():
         for number in range(1, count + 1):
             assert requirements.count(f"| {prefix}{number:02} |") == 1
-    for component in ("runtime_contract", "herdr_plugin"):
-        assert (root / "src" / component / "LICENSE").read_bytes() == (
-            root / "LICENSE"
-        ).read_bytes()
+    for name in ("LICENSE", "NOTICE"):
+        assert (root / name).is_file()
+        nested = [
+            path
+            for path in (root / "src").rglob(name)
+            if not {"node_modules", "cdk.out"}.intersection(path.parts)
+        ]
+        assert not nested, f"Project legal files must be kept at the repository root: {nested}"
     print(f"Verified {len(documents)} documents, {links} local links, and 56 requirement IDs.")
 
 
@@ -69,7 +73,13 @@ def check_packages(root, directory):
         wheel_path = next(directory.glob(f"{distribution}-*.whl"))
         with zipfile.ZipFile(wheel_path) as wheel:
             names = wheel.namelist()
-            assert any("licenses/" in name and name.endswith("LICENSE") for name in names)
+            metadata_path = next(name for name in names if name.endswith(".dist-info/METADATA"))
+            metadata_directory = metadata_path.removesuffix("METADATA")
+            for legal in ("LICENSE", "NOTICE"):
+                assert (
+                    wheel.read(metadata_directory + "extra_metadata/" + legal)
+                    == (root / legal).read_bytes()
+                )
             assert not any(
                 "__pycache__" in name or "/tests/" in name or name.startswith("tests/")
                 for name in names
@@ -90,7 +100,6 @@ def check_packages(root, directory):
                     continue
                 name = (Path(package) / relative).as_posix()
                 assert wheel.read(name) == source.read_bytes(), f"Wheel mismatch: {name}"
-            metadata_path = next(name for name in names if name.endswith(".dist-info/METADATA"))
             metadata = Parser().parsestr(wheel.read(metadata_path).decode())
             requirements = metadata.get_all("Requires-Dist", [])
             if package == "agentcore_contract":
@@ -108,7 +117,8 @@ def check_packages(root, directory):
                     archive.extractfile(files[name]).read()
                     == (root / "src" / component / name).read_bytes()
                 )
-            assert any(name.endswith("LICENSE") for name in files)
+            for legal in ("LICENSE", "NOTICE"):
+                assert archive.extractfile(files[legal]).read() == (root / legal).read_bytes()
             assert not any("__pycache__" in name or "/.venv/" in name for name in files)
     print("Verified two isolated Python wheels/source distributions and their dependency metadata.")
 

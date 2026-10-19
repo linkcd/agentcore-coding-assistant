@@ -8,9 +8,9 @@ chain in OpenCode 1.18.30; its metadata provider handles role credential refresh
 import json
 
 if __package__:
-    from ..common.runtime import inherit_settings
+    from ..common.runtime import inherit_settings, launch
 else:
-    from runtime import inherit_settings
+    from runtime import inherit_settings, launch
 
 # Remote shells may omit deployment environment variables. Copy only these
 # non-secret settings from PID 1, never its complete environment.
@@ -69,3 +69,11 @@ def launch_environment(current: dict[str, str], container: bytes) -> dict[str, s
 
 def launch_arguments(env: dict[str, str], arguments: list[str]) -> list[str]:
     return ["opencode", *arguments]
+
+
+def main():
+    launch(launch_environment, launch_arguments)
+
+
+if __name__ == "__main__":
+    main()

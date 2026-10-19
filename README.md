@@ -162,6 +162,8 @@ The connector does not supply `/app/run.sh` or infer OpenCode from the command o
 Missing `agent_kind` selects an ordinary terminal.
 
 The selected image definitions declare `["/app/run.sh"]` as their current command. A provision profile can override it explicitly.
+In the supplied images, `run.sh` executes the selected image's `run.py`, which starts OpenCode or Codex.
+See the [launcher source map](src/agentcore_runtime/README.md#shared-image-structure) for the corresponding repository files.
 Set `command: ["/custom/start"]` in the selected provision profile to replace the image's default argv.
 The connector can also override a valid descriptor's command explicitly.
 See [command selection](src/agentcore_runtime/README.md#launch-command-selection) for examples and limits.
@@ -173,14 +175,15 @@ See the [contract README](src/runtime_contract/README.md) for fields and version
 ## Status and limits
 
 The latest verification was on 2026-10-19.
-All three numbered profiles were destroyed and recreated in `eu-west-1` with new runtime ARNs. Every Runtime/DEFAULT endpoint reached version 1 and READY.
+All three numbered profiles run in `eu-west-1`. After the launcher image update, every Runtime/DEFAULT endpoint reached version 2 and READY.
 These are AWS runtime versions, not assistant package or descriptor versions.
 Codex with GPT-5.6 Sol passed native Bedrock Runtime inference, sandbox checks, attachment, a context-preserving follow-up, and a real shell-tool call. Ireland Runtime retention is `default`.
 Both OpenCode profiles passed real Kimi model calls.
 The filesystem permission issue is fixed using AWS's documented directory-marker metadata procedure. Separate sessions wrote and read 4 KiB and 8 MiB files successfully.
 The rebuilt model-only profiles passed core interactive E2E checks, both OpenCode health probes, and cross-session storage tests.
 Two fresh interactive sessions per profile returned real date and folder-access results and were left connected. Final CDK diffs showed no changes.
-See the [latest rebuild and E2E results](src/agentcore_runtime/README.md#model-only-profile-rebuild--2026-10-19), including the observed model-history limits.
+The later `run.sh` → `run.py` deployment passed fresh-session checks on all three profiles, including source-content checks for the launcher and root legal files.
+See the [latest deployment and E2E results](src/agentcore_runtime/README.md#launcher-deployment-and-e2e--2026-10-19), including test scope and remaining limits.
 
 Version `0.1.0` is experimental. Images pin OpenCode 1.18.30 and Codex 0.163.0; the connector pins AgentCore SDK 1.24.1.
 Herdr 0.9.5 validated all three profiles. Their descriptors were imported under their numbered profile names.
@@ -218,6 +221,7 @@ Standard SSM access and native Herdr SSH access are separate options. Neither ch
 - [Agent instructions](agent.md): repository conventions and ASD-STE100-style writing rules.
 
 All project documentation follows those style rules. Legal notices retain their original wording.
+The project keeps one [LICENSE](LICENSE) and one [NOTICE](NOTICE) at the repository root. Package and image builds include copies from those sources.
 Keep credentials, records, and transcripts out of Git. Keep local deployment bindings in ignored `src/agentcore_runtime/.env` and generated descriptors under ignored `.local/`.
 
 ```bash

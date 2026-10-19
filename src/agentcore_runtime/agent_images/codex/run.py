@@ -3,9 +3,9 @@
 import json
 
 if __package__:
-    from ..common.runtime import inherit_settings
+    from ..common.runtime import inherit_settings, launch
 else:
-    from runtime import inherit_settings
+    from runtime import inherit_settings, launch
 
 SETTINGS = ("AWS_REGION", "BEDROCK_INFERENCE_REGION", "BEDROCK_MODEL_ID", "BEDROCK_ENDPOINT_TYPE")
 PROVIDERS = {
@@ -42,3 +42,11 @@ def launch_arguments(env: dict[str, str], arguments: list[str]) -> list[str]:
         env["BEDROCK_MODEL_ID"],
         *arguments,
     ]
+
+
+def main():
+    launch(launch_environment, launch_arguments)
+
+
+if __name__ == "__main__":
+    main()
