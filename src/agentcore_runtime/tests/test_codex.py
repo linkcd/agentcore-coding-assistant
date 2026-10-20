@@ -50,6 +50,8 @@ def test_codex_only_inherits_nonsecret_runtime_settings():
 def test_codex_launch_preserves_user_config_and_native_arguments(
     monkeypatch, tmp_path, endpoint_type, provider, model
 ):
+    monkeypatch.setenv("AGENTCORE_TOOL_ROOT", str(tmp_path / "runtime"))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
     config = tmp_path / "config.toml"
     config.write_text('approval_policy = "on-request"')
     monkeypatch.setenv("HOME", str(tmp_path))

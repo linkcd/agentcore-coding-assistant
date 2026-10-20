@@ -29,7 +29,8 @@ The runtime execution role supplies worker model/tool access; it is a separate i
 A provision profile points to image, command, model, and environment settings.
 The repository supplies `codex-agentcore-profile-1`, `opencode-agentcore-profile-2`, and `opencode-s3filesystem-agentcore-profile-3`. You can add other named profiles.
 All three use Bedrock Runtime in `eu-west-1`. Codex selects GPT-5.6 Sol; both OpenCode profiles select Kimi K3.
-The filesystem profile starts at `/mnt/workspace`. The PUBLIC profiles start at `/home/agent`.
+The filesystem profile mounts its dedicated profile directory and starts at `/mnt/workspace`.
+The PUBLIC profiles start at `/home/agent`.
 The Herdr connection profile created below is a local ARN binding, not the runtime settings file.
 The connector uses resolved fields from the owner or deployment outputs; it does not guess them from a profile name.
 

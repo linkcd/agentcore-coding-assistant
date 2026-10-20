@@ -14,6 +14,57 @@ from agentcore_runtime.agent_images.common import runtime
 from agentcore_runtime.agent_images.opencode import run as opencode
 
 
+@pytest.mark.parametrize("path", ["", "/usr/bin:/bin", "/custom/bin:/usr/bin:/custom/bin"])
+def test_tool_paths_work_without_a_login_shell(path, tmp_path):
+    current = {"HOME": str(tmp_path / "home"), "PATH": path}
+    env = runtime.tool_environment(current)
+    paths = env["PATH"].split(os.pathsep)
+    assert paths.index("/usr/local/bin") < paths.index("/usr/bin")
+    assert str(tmp_path / "home/.local/bin") in paths
+    assert str(Path(env["CARGO_HOME"]) / "bin") in paths
+    assert env["PNPM_HOME"] in paths and env["GOBIN"] in paths
+    assert len(paths) == len(set(paths))
+    if "/custom/bin" in path:
+        assert paths[0] == "/custom/bin"
+    assert current["PATH"] == path
+
+
+def test_caches_and_project_environments_are_local_and_explicit_overrides_survive(tmp_path):
+    project = tmp_path / "persistent/repo"
+    current = {
+        "HOME": str(tmp_path / "home"),
+        "AGENTCORE_WORKDIR": str(project),
+        "AGENTCORE_TOOL_ROOT": str(tmp_path / "local"),
+    }
+    env = runtime.tool_environment(current)
+    runtime.prepare_tool_directories(env)
+    assert not project.exists()
+    for name in (
+        "UV_CACHE_DIR",
+        "UV_TOOL_DIR",
+        "UV_PYTHON_INSTALL_DIR",
+        "TMPDIR",
+        "UV_PROJECT_ENVIRONMENT",
+        "CARGO_TARGET_DIR",
+        "GOCACHE",
+        "GOMODCACHE",
+        "npm_config_cache",
+        "PNPM_CONFIG_STORE_DIR",
+    ):
+        assert Path(env[name]).is_relative_to(tmp_path / "local")
+    assert not Path(env["UV_PROJECT_ENVIRONMENT"]).exists()
+    assert env["UV_LINK_MODE"] == "copy"
+    other = runtime.tool_environment({**current, "AGENTCORE_WORKDIR": str(project / "other")})
+    assert other["UV_PROJECT_ENVIRONMENT"] != env["UV_PROJECT_ENVIRONMENT"]
+    overrides = {
+        "UV_CACHE_DIR": str(tmp_path / "chosen"),
+        "npm_config_prefix": str(tmp_path / "npm"),
+    }
+    selected = runtime.tool_environment({**current, **overrides})
+    assert all(selected[key] == value for key, value in overrides.items())
+    assert str(tmp_path / "npm/bin") in selected["PATH"].split(os.pathsep)
+
+
 def test_only_allowed_settings_cross_the_pid1_boundary():
     current = {"REGION": "explicit"}
     container = b"REGION=container\0MODEL=example\0AWS_SECRET_ACCESS_KEY=synthetic\0BROKEN"
@@ -22,8 +73,49 @@ def test_only_allowed_settings_cross_the_pid1_boundary():
     assert current == {"REGION": "explicit"}
 
 
+def test_dedicated_mount_is_the_profile_directory_and_preserves_config(monkeypatch, tmp_path):
+    mount = tmp_path / "mount"
+    mount.mkdir()
+    monkeypatch.setattr(Path, "is_mount", lambda path: path == mount)
+    config = mount / "opencode.json"
+    config.write_text("existing configuration")
+    env = {"AGENTCORE_REQUIRED_MOUNT": str(mount), "AGENTCORE_PROFILE_DIRECTORY": str(mount)}
+    runtime.prepare_profile_directory(env)
+    assert env["AGENTCORE_WORKDIR"] == str(mount)
+    assert config.read_text() == "existing configuration"
+    assert not (mount / "profiles").exists()
+
+
+@pytest.mark.parametrize(
+    "failure", ["unmounted", "outside", "outside-workdir", "nested", "symlink"]
+)
+def test_profile_bootstrap_rejects_wrong_mount_or_directory(monkeypatch, tmp_path, failure):
+    mount = tmp_path / "mount"
+    mount.mkdir()
+    env = {
+        "AGENTCORE_REQUIRED_MOUNT": str(mount),
+        "AGENTCORE_PROFILE_DIRECTORY": str(mount),
+        "AGENTCORE_WORKDIR": str(mount),
+    }
+    monkeypatch.setattr(Path, "is_mount", lambda path: path == mount and failure != "unmounted")
+    if failure == "outside":
+        env["AGENTCORE_PROFILE_DIRECTORY"] = str(tmp_path / "outside/profile1")
+    elif failure == "outside-workdir":
+        env["AGENTCORE_WORKDIR"] = str(tmp_path / "other")
+    elif failure == "nested":
+        env["AGENTCORE_PROFILE_DIRECTORY"] = str(mount / "profiles/profile1")
+    elif failure == "symlink":
+        alias = tmp_path / "alias"
+        alias.symlink_to(mount, target_is_directory=True)
+        env["AGENTCORE_PROFILE_DIRECTORY"] = str(alias)
+    with pytest.raises(ValueError):
+        runtime.prepare_profile_directory(env)
+    assert not list(mount.iterdir())
+
+
 @pytest.mark.parametrize("adapter", [opencode, codex])
 def test_shared_launch_preserves_arguments_cwd_and_configuration(monkeypatch, tmp_path, adapter):
+    monkeypatch.setenv("AGENTCORE_TOOL_ROOT", str(tmp_path / "runtime"))
     project = tmp_path / "project"
     project.mkdir()
     monkeypatch.setenv("HOME", str(tmp_path))
@@ -106,7 +198,9 @@ def test_shell_endpoint_choice_takes_precedence_over_pid1(adapter):
 
 
 @pytest.mark.parametrize("mounted", [True, False])
-def test_configured_mount_must_be_ready_before_launch(monkeypatch, mounted):
+def test_configured_mount_must_be_ready_before_launch(monkeypatch, mounted, tmp_path):
+    monkeypatch.setenv("AGENTCORE_TOOL_ROOT", str(tmp_path / "runtime"))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.setenv("AWS_REGION", "eu-west-1")
     monkeypatch.setenv("BEDROCK_MODEL_ID", "example.model")
     monkeypatch.setenv("BEDROCK_ENDPOINT_TYPE", "runtime")
@@ -142,7 +236,7 @@ import hashlib, json, subprocess, time, urllib.request
 from pathlib import Path
 for name, expected in legal_hashes.items():
     assert hashlib.sha256((Path('/app') / name).read_bytes()).hexdigest() == expected
-server = subprocess.Popen(['python3.11', '/app/healthcheck.py'])
+server = subprocess.Popen(['/usr/local/bin/python3', '/app/healthcheck.py'])
 try:
     deadline = time.monotonic() + 10
     while True:
@@ -164,7 +258,17 @@ finally:
 """
     )
     result = subprocess.run(
-        ["docker", "run", "--rm", "--network", "none", image, "python3.11", "-c", script],
+        [
+            "docker",
+            "run",
+            "--rm",
+            "--network",
+            "none",
+            image,
+            "/usr/local/bin/python3",
+            "-c",
+            script,
+        ],
         capture_output=True,
         text=True,
         timeout=30,

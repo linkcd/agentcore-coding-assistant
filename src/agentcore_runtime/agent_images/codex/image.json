@@ -3,7 +3,24 @@
   "buildArgs": {
     "NPM_PACKAGE": "@openai/codex",
     "NPM_VERSION": "0.163.0",
-    "EXECUTABLE": "codex"
+    "EXECUTABLE": "codex",
+    "PYTHON_VERSION": "3.15.0",
+    "MCP_PYTHON_VERSION": "3.13.16",
+    "NODE_VERSION": "24.22.0",
+    "NODE_SHA256": "fef00bb4d36e1c50104a9775a10359beee98f162b4104dd12472c75065c6a143",
+    "UV_VERSION": "0.13.3",
+    "UV_SHA256": "611ff684f193a84d2fdad29c5f12505d02ece94984c7c982cdde950eba5c95b9",
+    "PNPM_VERSION": "12.14.0",
+    "GO_VERSION": "1.27.3",
+    "GO_SHA256": "a06e99309dbcbdca1a8ccd2282c3ee146e55930886e26b4f1193269587165f49",
+    "RUST_VERSION": "1.99.1",
+    "RUST_SHA256": "a48fb1e853be56ce9b8e2751f5464dbd5e16440cd81e237920f3a5e7e806333e",
+    "GH_VERSION": "2.102.0",
+    "GH_SHA256": "7862c86c72f43df3a2d93ddde6f473285b4e2af61b494849846827e513ef6484",
+    "RIPGREP_VERSION": "15.2.0",
+    "RIPGREP_SHA256": "a740b91c82eaf9914cfedd353572f2791cbe0162c84101ee0951058f4dcbc90d",
+    "AWSCLI_VERSION": "2.38.2",
+    "AWSCLI_SHA256": "ff75a24de7f5a6908dbe2f9ff88253f31e1d67b05595bb460516396daed5d1ff"
   },
   "command": ["/app/run.sh"],
   "agentKind": "codex"

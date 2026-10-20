@@ -6,6 +6,8 @@ import { spawnSync } from "node:child_process";
 import { App } from "aws-cdk-lib";
 import { Template, Match } from "aws-cdk-lib/assertions";
 import { RuntimeStack } from "../runtime-stack";
+import { InfrastructureStack, RuntimeInfrastructure } from "../infrastructure-stack";
+import { loadInfrastructureConfig } from "../infrastructure-config";
 import { IMAGE_DIRECTORY, loadImage } from "../image";
 import { loadProfile, loadRuntimeEnvironment, parseProfile, REPOSITORY_ROOT, RUNTIME_ROOT, RuntimeProfile } from "../profile";
 
@@ -15,9 +17,14 @@ const STORAGE = "opencode-s3filesystem-agentcore-profile-3";
 const PROFILE_NAMES = [CODEX, OPENCODE, STORAGE];
 // Tests use synthetic bindings, never the developer's .env or AWS credentials.
 const TEST_ENV = {
-  SHARED_VPC_SUBNET_IDS: "subnet-" + "0".repeat(8) + ",subnet-" + "1".repeat(8),
-  SHARED_VPC_SECURITY_GROUP_IDS: "sg-" + "0".repeat(8),
-  SHARED_S3_FILES_ACCESS_POINT_ARN: `arn:aws:s3files:eu-west-1:123456789012:file-system/fs-${"0".repeat(17)}/access-point/fsap-${"0".repeat(17)}`,
+  S3_BUCKET_NAME: "example-agent-workspaces",
+  VPC_SUBNET_IDS: "subnet-" + "0".repeat(8) + ",subnet-" + "1".repeat(8),
+  VPC_SECURITY_GROUP_IDS: "sg-" + "0".repeat(8),
+};
+const TEST_INFRA: RuntimeInfrastructure = {
+  account: "123456789012", region: "eu-west-1", subnetIds: ["subnet-" + "0".repeat(8), "subnet-" + "1".repeat(8)],
+  securityGroupIds: ["sg-" + "0".repeat(8)], fileSystemId: `fs-${"0".repeat(17)}`,
+  fileSystemArn: `arn:aws:s3files:eu-west-1:123456789012:file-system/fs-${"0".repeat(17)}`,
 };
 const profileFor = (name: string) => loadProfile(name, TEST_ENV);
 
@@ -25,6 +32,7 @@ function template(name = OPENCODE, profile: RuntimeProfile = profileFor(name)) {
   const stack = new RuntimeStack(new App(), profile.stackName, {
     account: "123456789012", profileName: name, profile,
     imageDefinition: loadImage(profile.image),
+    infrastructure: profile.s3Files ? TEST_INFRA : undefined,
   });
   return Template.fromStack(stack);
 }
@@ -44,7 +52,8 @@ test("the repository has exactly the three requested sample profiles", () => {
   assert.equal(storage.environment, undefined);
   assert.equal(codex.vpc, undefined);
   assert.equal(opencode.vpc, undefined);
-  assert.ok(storage.vpc && storage.s3Files);
+  assert.ok(!storage.vpc && storage.s3Files);
+  assert.equal(storage.s3Files.storageStackName, "HerdrAgentStorage");
   for (const profile of [codex, opencode, storage]) {
     assert.equal(profile.inference["bedrock-endpoint-type"], undefined);
     assert.equal(profile.inference.region, undefined);
@@ -121,6 +130,19 @@ test("profile names remain generic settings references", () => {
   assert.throws(() => loadProfile("reviewer", {}), { code: "ENOENT" });
 });
 
+test("both image definitions pin the shared toolchain and archive checksums", () => {
+  const tools = (name: string) => Object.fromEntries(Object.entries(loadImage(name).buildArgs)
+    .filter(([key]) => !["NPM_PACKAGE", "NPM_VERSION", "EXECUTABLE"].includes(key)));
+  assert.deepEqual(tools("opencode"), tools("codex"));
+  const args = tools("opencode");
+  for (const name of ["PYTHON", "MCP_PYTHON", "NODE", "UV", "PNPM", "GO", "RUST", "GH", "AWSCLI", "RIPGREP"]) {
+    assert.match(args[`${name}_VERSION`], /^\d+\.\d+\.\d+$/);
+  }
+  for (const name of ["NODE", "UV", "GO", "RUST", "GH", "AWSCLI", "RIPGREP"]) {
+    assert.match(args[`${name}_SHA256`], /^[0-9a-f]{64}$/);
+  }
+});
+
 test("sample inference IAM permits both native endpoints but not Bedrock administration", () => {
   for (const name of PROFILE_NAMES) {
     const policy = template(name).findResources("AWS::IAM::Policy");
@@ -193,6 +215,7 @@ test("both OpenCode profiles share one image and exclude deployment data from as
     const app = new App();
     new RuntimeStack(app, profile.stackName, {
       account: "123456789012", profileName: name, profile, imageDefinition: definition,
+      infrastructure: profile.s3Files ? TEST_INFRA : undefined,
     });
     const assembly = app.synth();
     const imagePath = path.relative(REPOSITORY_ROOT, IMAGE_DIRECTORY);
@@ -202,6 +225,9 @@ test("both OpenCode profiles share one image and exclude deployment data from as
     const stagedImages = path.join(staged, imagePath);
     assert.ok(fs.existsSync(path.join(stagedImages, profile.image, "image.json")));
     assert.ok(fs.existsSync(path.join(stagedImages, profile.image, "run.py")));
+    for (const helper of ["runtime.py", "mcp_run.py", "install_tools.py"]) {
+      assert.ok(fs.existsSync(path.join(stagedImages, "common", helper)));
+    }
     assert.ok(!fs.existsSync(path.join(stagedImages, profile.image === "opencode" ? "codex" : "opencode")));
     for (const legal of ["LICENSE", "NOTICE"]) {
       assert.deepEqual(fs.readFileSync(path.join(staged, legal)), fs.readFileSync(path.join(REPOSITORY_ROOT, legal)));
@@ -217,30 +243,40 @@ test("both OpenCode profiles share one image and exclude deployment data from as
   assert.equal(imageSources[0], imageSources[1]);
 });
 
-test("S3 configuration uses only the access point, without direct bucket access or a lookup", () => {
+test("S3 profiles create a dedicated access point without giving the worker direct bucket access", () => {
   const profile = profileFor(STORAGE);
   const t = template(STORAGE);
   t.hasResourceProperties("AWS::BedrockAgentCore::Runtime", {
     NetworkConfiguration: { NetworkMode: "VPC", NetworkModeConfig: {
-      Subnets: profile.vpc!.subnetIds, SecurityGroups: profile.vpc!.securityGroupIds,
+      Subnets: TEST_INFRA.subnetIds, SecurityGroups: TEST_INFRA.securityGroupIds,
     } },
     FilesystemConfigurations: [{ S3FilesAccessPoint: {
-      AccessPointArn: profile.s3Files!.accessPointArn, MountPath: "/mnt/workspace",
+      AccessPointArn: { "Fn::GetAtt": ["WorkspaceAccessPoint", "AccessPointArn"] }, MountPath: "/mnt/workspace",
     } }],
     EnvironmentVariables: {
-      AGENTCORE_WORKDIR: "/mnt/workspace", AGENTCORE_REQUIRED_MOUNT: "/mnt/workspace",
+      AGENTCORE_WORKDIR: "/mnt/workspace",
+      AGENTCORE_PROFILE_DIRECTORY: "/mnt/workspace",
+      AGENTCORE_REQUIRED_MOUNT: "/mnt/workspace",
       BEDROCK_ENDPOINT_TYPE: Match.absent(),
     },
   });
   t.resourceCountIs("Custom::AWS", 0);
   t.resourceCountIs("AWS::Lambda::Function", 0);
   t.resourceCountIs("AWS::IAM::Role", 1);
-  const fileSystemArn = profile.s3Files!.accessPointArn.split("/access-point/")[0];
+  t.resourceCountIs("AWS::S3Files::AccessPoint", 1);
+  t.hasResourceProperties("AWS::S3Files::AccessPoint", {
+    FileSystemId: TEST_INFRA.fileSystemId,
+    RootDirectory: { Path: `/agent-filesystem/profiles/${STORAGE}`, CreationPermissions: {
+      OwnerUid: "1000", OwnerGid: "1000", Permissions: "755",
+    } },
+  });
+  const accessPointArn = { "Fn::GetAtt": ["WorkspaceAccessPoint", "AccessPointArn"] };
+  const fileSystemArn = TEST_INFRA.fileSystemArn;
   t.hasResourceProperties("AWS::IAM::Policy", { PolicyDocument: { Statement: Match.arrayWith([
     Match.objectLike({ Action: ["s3files:ClientMount", "s3files:ClientWrite"], Resource: fileSystemArn,
-      Condition: { ArnEquals: { "s3files:AccessPointArn": profile.s3Files!.accessPointArn } } }),
+      Condition: { ArnEquals: { "s3files:AccessPointArn": accessPointArn } } }),
     Match.objectLike({ Action: ["s3files:GetAccessPoint", "s3files:GetFileSystem", "s3files:GetMountTarget", "s3files:ListMountTargets"],
-      Condition: Match.absent(), Resource: Match.arrayWith([profile.s3Files!.accessPointArn]) }),
+      Condition: Match.absent(), Resource: Match.arrayWith([accessPointArn]) }),
   ]) } });
   const serialized = JSON.stringify(t.toJSON());
   assert.ok(!serialized.includes("s3:"), "The execution role must not bypass the access point with direct S3 grants");
@@ -280,11 +316,17 @@ test("duplicate, unused, and invalid profile fields are rejected", () => {
     { environment: { BEDROCK_MODEL_ID: "duplicate" } }, { environment: { AWS_REGION: "eu-west-1" } },
     { environment: { BEDROCK_ENDPOINT_TYPE: "mantle" } },
     { environment: { OPENCODE_WORKDIR: "/somewhere" } },
+    { environment: { AGENTCORE_PROFILE_DIRECTORY: "/somewhere" } },
     { s3Files: { ...base.s3Files, bucketName: "duplicate-bucket" } },
     { s3Files: { ...base.s3Files, prefix: "agents/" } },
     { s3Files: { ...base.s3Files, mountPath: "/mnt/nested/path" } },
     { s3Files: { ...base.s3Files, readOnly: "false" } },
-    { vpc: undefined }, { vpc: { subnetIds: [], securityGroupIds: null } },
+    { s3Files: { ...base.s3Files, storageStackName: undefined } },
+    { s3Files: { ...base.s3Files, storageStackName: "invalid name" } },
+    { s3Files: { ...base.s3Files, storageStackName: base.stackName } },
+    { s3Files: { ...base.s3Files, accessPointArn: "legacy-input" } },
+    { vpc: { subnetIds: TEST_INFRA.subnetIds, securityGroupIds: TEST_INFRA.securityGroupIds } },
+    { vpc: { subnetIds: [], securityGroupIds: null } },
     { region: ["eu-west-1"] }, { workingDirectory: "relative" }, { tags: { InvalidValue: 1 } },
     { stackName: "invalid stack" }, { stackName: "1Invalid" }, { stackName: "A".repeat(129) },
     { runtimeName: "invalid-runtime" }, { runtimeName: "A".repeat(49) },
@@ -293,26 +335,27 @@ test("duplicate, unused, and invalid profile fields are rejected", () => {
   ]) assert.throws(() => parseProfile({ ...base, ...changes }));
 });
 
-test("env resolution handles CSV and fails on missing S3 bindings", () => {
-  const profile = loadProfile(STORAGE, {
-    ...TEST_ENV, SHARED_VPC_SUBNET_IDS: TEST_ENV.SHARED_VPC_SUBNET_IDS.replace(",", ", "),
+test("infrastructure env resolution handles CSV and fails on missing values", () => {
+  const config = loadInfrastructureConfig({
+    ...TEST_ENV, VPC_SUBNET_IDS: TEST_ENV.VPC_SUBNET_IDS.replace(",", ", "),
   });
-  assert.deepEqual(profile.vpc!.subnetIds, TEST_ENV.SHARED_VPC_SUBNET_IDS.split(","));
+  assert.deepEqual(config.subnetIds, TEST_ENV.VPC_SUBNET_IDS.split(","));
   for (const key of Object.keys(TEST_ENV)) {
     const env: Record<string, string> = { ...TEST_ENV };
     delete env[key];
-    assert.throws(() => loadProfile(STORAGE, env), new RegExp(`Missing deployment variable ${key}`));
+    assert.throws(() => loadInfrastructureConfig(env), new RegExp(`Missing deployment variable ${key}`));
   }
   assert.doesNotThrow(() => loadProfile(OPENCODE, {}));
   assert.doesNotThrow(() => loadProfile(CODEX, {}));
 });
 
-test("S3 access points must match the deployment account and region", () => {
+test("managed infrastructure must match the deployment account and region", () => {
   const profile = profileFor(STORAGE);
   for (const target of [{ account: "111122223333", region: profile.region }, { account: "123456789012", region: "us-east-1" }]) {
     assert.throws(() => new RuntimeStack(new App(), "Mismatch", {
       account: target.account, profileName: STORAGE, profile: { ...profile, region: target.region },
       imageDefinition: loadImage(profile.image),
+      infrastructure: TEST_INFRA,
     }), /effective deployment account and region/);
   }
 });
@@ -341,15 +384,16 @@ test("the component env file is the only source of deployment bindings", (t) => 
     assert.notEqual(file, path.join(REPOSITORY_ROOT, ".env"));
     return file === envFile ? Object.entries(TEST_ENV).map(([key, value]) => `${key}=${value}`).join("\n") : originalRead(file, options);
   });
-  const previous = process.env.SHARED_VPC_SUBNET_IDS;
-  process.env.SHARED_VPC_SUBNET_IDS = "ambient-value-must-not-override-the-file";
+  const previous = process.env.S3_BUCKET_NAME;
+  process.env.S3_BUCKET_NAME = "ambient-value-must-not-override-the-file";
   t.after(() => {
-    if (previous === undefined) delete process.env.SHARED_VPC_SUBNET_IDS;
-    else process.env.SHARED_VPC_SUBNET_IDS = previous;
+    if (previous === undefined) delete process.env.S3_BUCKET_NAME;
+    else process.env.S3_BUCKET_NAME = previous;
   });
   assert.deepEqual(loadRuntimeEnvironment(), TEST_ENV);
   assert.deepEqual(loadProfile(STORAGE, loadRuntimeEnvironment()), profileFor(STORAGE));
-  assert.throws(() => loadProfile(STORAGE), /Missing deployment variable SHARED_VPC_SUBNET_IDS/);
+  assert.equal(loadInfrastructureConfig(loadRuntimeEnvironment()).bucketName, TEST_ENV.S3_BUCKET_NAME);
+  assert.throws(() => loadInfrastructureConfig({}), /Missing deployment variable S3_BUCKET_NAME/);
   exists = false;
   assert.deepEqual(loadRuntimeEnvironment(), {});
 });
@@ -409,4 +453,104 @@ test("Git ignores local env values but includes the env template", () => {
   assert.ok(fs.existsSync(path.join(RUNTIME_ROOT, ".sample.env")));
   assert.equal(spawnSync("git", ["check-ignore", "--no-index", "--quiet", env], { cwd: REPOSITORY_ROOT }).status, 0);
   assert.equal(spawnSync("git", ["check-ignore", "--no-index", "--quiet", sample], { cwd: REPOSITORY_ROOT }).status, 1);
+});
+
+test("storage infrastructure consumes external networking without managing any EC2 resources", () => {
+  const stack = new InfrastructureStack(new App(), "Infrastructure", {
+    account: "123456789012", region: "eu-west-1", stackName: "ExampleStorage",
+    config: loadInfrastructureConfig(TEST_ENV),
+  });
+  const t = Template.fromStack(stack);
+  const resources = t.toJSON().Resources;
+  assert.deepEqual(new Set(Object.keys(resources)), new Set([
+    "S3FilesRole", "S3FilesFileSystem", "S3FilesMountTarget1", "S3FilesMountTarget2",
+  ]));
+  assert.equal(resources.S3FilesFileSystem.Properties.Prefix, undefined);
+  assert.ok(JSON.stringify(resources.S3FilesFileSystem.Properties.Bucket).includes(TEST_ENV.S3_BUCKET_NAME));
+  assert.deepEqual(resources.S3FilesFileSystem.Properties.RoleArn, { "Fn::GetAtt": ["S3FilesRole", "Arn"] });
+  TEST_INFRA.subnetIds.forEach((subnet, index) => {
+    assert.deepEqual(resources[`S3FilesMountTarget${index + 1}`].Properties, {
+      FileSystemId: { "Fn::GetAtt": ["S3FilesFileSystem", "FileSystemId"] },
+      SubnetId: subnet, SecurityGroups: TEST_INFRA.securityGroupIds,
+    });
+  });
+  assert.equal(stack.stackName, "ExampleStorage");
+  t.resourceCountIs("AWS::S3::Bucket", 0);
+  t.resourceCountIs("AWS::S3Files::AccessPoint", 0);
+  t.resourceCountIs("Custom::AWS", 0);
+  t.resourceCountIs("AWS::Lambda::Function", 0);
+  for (const output of ["S3FilesFileSystemId", "S3FilesFileSystemArn", "S3FilesRoleArn"]) {
+    assert.ok(t.toJSON().Outputs[output]);
+  }
+  assert.equal(t.toJSON().Parameters?.VpcCidr, undefined);
+  assert.equal(t.toJSON().Parameters?.BucketName, undefined);
+  assert.equal(t.toJSON().Rules?.EnvironmentMatchesParameters, undefined);
+});
+
+test("a stale bucket prefix fails instead of silently changing the backing location", () => {
+  assert.throws(() => loadInfrastructureConfig({ ...TEST_ENV, S3_FILES_PREFIX: "agents/" }),
+    /Remove S3_FILES_PREFIX/);
+});
+
+test("two profiles get distinct access-point roots and stack-local mount authorization", () => {
+  const app = new App();
+  const infrastructure = new InfrastructureStack(app, "Infrastructure", {
+    account: "123456789012", region: "eu-west-1", stackName: "ExampleStorage",
+    config: loadInfrastructureConfig(TEST_ENV),
+  });
+  const stacks = ["first-profile", "second-profile"].map((name) => {
+    const profile = { ...profileFor(STORAGE), stackName: name, runtimeName: name.replaceAll("-", "_") };
+    const stack = new RuntimeStack(app, name, {
+      account: "123456789012", profileName: name, profile, imageDefinition: loadImage(profile.image),
+      infrastructure: infrastructure.runtimeInfrastructure,
+    });
+    return { name, stack };
+  });
+  for (const { name, stack } of stacks) {
+    const t = Template.fromStack(stack);
+    t.resourceCountIs("AWS::S3Files::AccessPoint", 1);
+    t.hasResourceProperties("AWS::S3Files::AccessPoint", { RootDirectory: { Path: `/agent-filesystem/profiles/${name}` } });
+    t.hasResourceProperties("AWS::BedrockAgentCore::Runtime", { EnvironmentVariables: {
+      AGENTCORE_PROFILE_DIRECTORY: "/mnt/workspace",
+      AGENTCORE_WORKDIR: "/mnt/workspace",
+    } });
+    const policy = Object.values(t.findResources("AWS::IAM::Policy"))[0] as any;
+    const mount = policy.Properties.PolicyDocument.Statement.find((s: any) =>
+      [s.Action].flat().includes("s3files:ClientMount"));
+    assert.deepEqual(mount.Condition.ArnEquals["s3files:AccessPointArn"],
+      { "Fn::GetAtt": ["WorkspaceAccessPoint", "AccessPointArn"] });
+    assert.ok(JSON.stringify(t.toJSON()).includes("Fn::ImportValue"));
+  }
+});
+
+test("storage validation rejects invalid directory settings and external network identifiers", () => {
+  for (const changes of [
+    { S3_BUCKET_NAME: "Invalid_Bucket" },
+    { S3_FILES_PROFILE_ROOT_DIRECTORY: "/a/../b" }, { S3_FILES_PROFILE_ROOT_DIRECTORY: "/a/b/c/d" },
+    { VPC_SUBNET_IDS: "not-a-subnet" }, { VPC_SECURITY_GROUP_IDS: "not-a-group" },
+    { VPC_SUBNET_IDS: `${TEST_INFRA.subnetIds[0]},${TEST_INFRA.subnetIds[0]}` },
+    { VPC_SECURITY_GROUP_IDS: `${TEST_INFRA.securityGroupIds[0]},${TEST_INFRA.securityGroupIds[0]}` },
+  ]) assert.throws(() => loadInfrastructureConfig({ ...TEST_ENV, ...changes }));
+});
+
+test("managed filesystem profiles fail before synthesis without infrastructure bindings", () => {
+  const profile = profileFor(STORAGE);
+  assert.throws(() => new RuntimeStack(new App(), profile.stackName, {
+    account: "123456789012", profileName: STORAGE, profile, imageDefinition: loadImage(profile.image),
+  }), /requires managed infrastructure bindings/);
+});
+
+test("profiles cannot reuse or share an externally supplied access point", () => {
+  const arn = `${TEST_INFRA.fileSystemArn}/access-point/fsap-${"1".repeat(17)}`;
+  const base = profileFor(STORAGE);
+  assert.throws(() => parseProfile({ ...base, s3Files: { ...base.s3Files, accessPointArn: arn } }));
+  assert.throws(() => parseProfile({ ...base,
+    s3Files: { accessPointArn: arn, mountPath: "/mnt/workspace", readOnly: false } }));
+});
+
+test("S3 working-directory overrides stay inside the dedicated mount", () => {
+  for (const workingDirectory of ["/mnt", "/mnt/workspace/../../tmp", "/tmp/project"]) {
+    assert.throws(() => template(STORAGE, { ...profileFor(STORAGE), workingDirectory }),
+      /inside this profile/);
+  }
 });

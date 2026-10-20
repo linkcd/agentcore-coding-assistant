@@ -15,7 +15,7 @@ export interface RuntimeProfile {
   agentKind?: string | null;
   inference: { modelId: string; region?: string; "bedrock-endpoint-type"?: "runtime" | "mantle" };
   s3Files?: {
-    accessPointArn: string;
+    storageStackName: string;
     mountPath: string;
     readOnly: boolean;
   };
@@ -108,21 +108,21 @@ export function parseProfile(input: unknown, environment: Environment = {}): Run
     }
   }
   if (data.s3Files !== undefined &&
-      (!data.s3Files || !data.vpc || typeof data.s3Files.mountPath !== "string" ||
+      (!data.s3Files || data.vpc !== undefined || typeof data.s3Files.mountPath !== "string" ||
        !/^\/mnt\/[A-Za-z0-9][A-Za-z0-9._-]*$/.test(data.s3Files.mountPath ?? "") ||
        data.s3Files.mountPath.length > 200 || typeof data.s3Files.readOnly !== "boolean" ||
-       Object.keys(data.s3Files).some((key) => !["accessPointArn", "mountPath", "readOnly"].includes(key)))) {
-    throw new Error("S3 Files requires VPC mode and valid filesystem settings");
+        Object.keys(data.s3Files).some((key) => !["storageStackName", "mountPath", "readOnly"].includes(key)))) {
+    throw new Error("S3 Files requires valid mount settings and external network bindings from .env");
   }
   if (data.s3Files) {
     const storage = data.s3Files;
-    if (typeof storage.accessPointArn !== "string" ||
-        !new RegExp(`^arn:aws(?:-cn|-us-gov)?:s3files:${data.region}:[0-9]{12}:file-system/fs-[0-9a-f]{17,40}/access-point/fsap-[0-9a-f]{17,40}$`).test(storage.accessPointArn)) {
-      throw new Error("s3Files.accessPointArn must resolve to an access point in the runtime region");
+    if (typeof storage.storageStackName !== "string" ||
+        !/^[A-Za-z][A-Za-z0-9-]{0,127}$/.test(storage.storageStackName) || storage.storageStackName === data.stackName) {
+      throw new Error("Invalid s3Files.storageStackName");
     }
   }
   const derivedEnvironment = new Set(["AWS_REGION", "AWS_DEFAULT_REGION", "AWS_PROFILE", "BEDROCK_MODEL_ID", "BEDROCK_INFERENCE_REGION", "BEDROCK_ENDPOINT_TYPE",
-    "AGENTCORE_WORKDIR", "AGENTCORE_REQUIRED_MOUNT", "OPENCODE_WORKDIR", "CODEX_WORKDIR"]);
+    "AGENTCORE_WORKDIR", "AGENTCORE_PROFILE_DIRECTORY", "AGENTCORE_REQUIRED_MOUNT", "OPENCODE_WORKDIR", "CODEX_WORKDIR"]);
   if (data.environment !== undefined && (!data.environment || typeof data.environment !== "object" || Array.isArray(data.environment) ||
       Object.entries(data.environment).some(([key, value]) => typeof value !== "string" || derivedEnvironment.has(key)))) {
     throw new Error("Environment overrides must be strings and must not duplicate derived runtime settings");

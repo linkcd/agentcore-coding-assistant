@@ -19,7 +19,7 @@ def run(runtime_arn: str, aws_profile: str | None, model_turn: bool):
     profile = ConnectionSpec.from_dict({"runtime_arn": runtime_arn, "command": ["/app/run.sh"]})
     record = {"runtime_session_id": str(uuid.uuid4())}
     script = Path(__file__).with_name("runtime_activity_smoke.py").read_text()
-    command = ["python3.11", "-c", script, "--existing-health-server"]
+    command = ["/usr/local/bin/python3", "-c", script, "--existing-health-server"]
     if model_turn:
         command.append("--model-turn")
     client = boto3.Session(profile_name=aws_profile, region_name=profile.region).client(

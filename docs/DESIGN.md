@@ -9,7 +9,8 @@ It does not introduce a separate end-user platform.
 The prototype creates agents, reattaches original PTYs, detaches, and requests compute stop.
 Sections marked **target** describe planned behavior.
 The current connector refuses to relaunch work when a previously used PTY is missing.
-The latest verification date is 2026-10-19. See [packaging and validation](#packaging-and-validation) for current deployment and test results.
+The latest verification date is 2026-10-20. See [packaging and validation](#packaging-and-validation) for current deployment and test results.
+After an authorized teardown retaining the network, the reviewed runtime/storage stacks were redeployed and passed E2E checks; see the [current deployment status](../README.md#status-and-limits).
 The filesystem profile already mounts shared coding files. Persistent home, conversation checkpoints, and automatic recovery remain targets.
 
 The repository separates runtime definitions, the Herdr connector, and their connection contract.
@@ -288,8 +289,12 @@ The project uses TypeScript, Node.js 22+, npm, and Docker with ARM64 support.
 The existing CDK bootstrap provides deployment roles and asset storage. It is shared infrastructure, not part of the runtime's teardown.
 
 Runtime model authorization is separate from deployment authorization. Verify model availability and account access.
-Profiles select lifecycle values and optional VPC/storage bindings. Codex and plain OpenCode use PUBLIC mode; the filesystem sample supplies a VPC and S3 Files access point.
-The filesystem sample grants access-point-scoped mount/write access and required metadata reads. It has no direct-S3 grants or bucket lookup.
+Profiles select lifecycle values and optional storage. Codex and plain OpenCode use PUBLIC mode; the filesystem sample uses a storage-only stack and creates its own S3 Files access point.
+Bucket, external network IDs, and access-point root settings come from the component `.env`. The storage stack name comes from `s3Files.storageStackName`.
+The current implementation creates no VPC, subnets, security groups, routes, gateways, or bucket. It consumes existing network identifiers.
+Each filesystem worker receives access-point-scoped mount/write access and required metadata reads. Its role has no direct-S3 grants or bucket lookup.
+On 2026-10-20, adoption preserved all 23 existing infrastructure resource identities and properties. The S3 runtime/DEFAULT reached version 5; other runtimes stayed at version 4.
+The user selected an empty dedicated root. Fresh-session checks passed mount access, no inherited MCP configuration, and a non-root cross-session file write/read with cleanup.
 All samples declare a 900-second idle timeout and 28,800-second maximum lifetime in their profiles.
 Deployment does not create an assistant session. The new-agent action does that.
 
@@ -301,6 +306,11 @@ All supplied profiles use `agent_images/common/Dockerfile` with explicit npm pac
 The build context is the repository root. CDK includes root legal files, shared image files, and the selected adapter only.
 Another adapter's changes do not invalidate this image asset. Deployment bindings and other components are excluded.
 The shared `/app/run.sh` executes `/app/run.py`, copied from the selected image's directory.
+It selects the image-installed Python through an absolute path.
+The common launcher repairs tool discovery and prepares local package caches, tool environments, and build directories.
+The image provides a checksum-pinned coding toolchain. See the [tool inventory](../src/agentcore_runtime/README.md#coding-tools-and-mcp-environments).
+The generic `agentcore-mcp` command rebuilds locked Python dependencies from an explicit persistent tool project into a local environment.
+It registers no particular MCP server. Per-binding storage allocation and conversation recovery remain separate requirements.
 That entrypoint imports `runtime.py` helpers for environment inheritance, mount checks, working-directory selection, and native process execution.
 The OpenCode adapter forwards native argv, including `--session`. The common launcher selects `AGENTCORE_WORKDIR` or the image home.
 It preserves user configuration and does not grant automatic tool approval.
@@ -320,7 +330,7 @@ It copies only allowlisted non-secret deployment settings from PID 1 when the sh
 The image includes a local OpenCode activity plugin and health reader.
 The build resolves plugin SDK dependencies so the default home can load the hook without package downloads.
 The PUBLIC profiles have no S3 Files mount. Their coding files and assistant state are ephemeral.
-The filesystem provision profile mounts a supplied access point at `/mnt/workspace` and requires that mount before launch.
+The filesystem provision profile mounts its generated access point at `/mnt/workspace` and requires that mount before launch.
 After the documented directory-marker repair, 4 KiB and 8 MiB write/read tests passed across separate sessions.
 Home and conversation state still use local runtime storage. Persistent home, checkpoints, and broader cold-read/performance tests remain pending.
 
@@ -473,8 +483,17 @@ Unknown remote IDs need an explicit adoption flow. Do not guess the shell or con
 
 ## Persistent coding files through S3 Files
 
-**Implemented baseline:** the filesystem profile uses an existing S3 Files access point, VPC bindings, mount readiness, and a mounted working directory.
-Cross-session file tests passed for 4 KiB and 8 MiB files. The PUBLIC profiles have no shared mount.
+**Implemented:** use one dedicated access point per S3-backed profile, rooted at `/agent-filesystem/profiles/<profile-name>`.
+Each runtime mounts and works directly at `/mnt/workspace`.
+See [profile storage mapping](STORAGE_MAPPING.md) for the complete S3, access-point, runtime, and permission mapping.
+TypeScript CDK manages S3 Files storage using an external network and bucket. Each S3-backed provision profile creates a dedicated access point.
+The launcher does not create another profile directory inside the mount. Configuration, skills, and tools belong directly in that profile's mounted root.
+Worker IAM is scoped to its generated access point. The provision-profile schema rejects externally supplied access points and cross-profile access-point sharing.
+New roots start empty; no data migration is implicit. The legacy sample access point is not recreated.
+Bucket and existing subnet/security-group IDs come from the component `.env`.
+Access-point UID/GID `1000:1000` and directory mode `755` are fixed CDK values matching the runtime images.
+Storage identifiers flow through CloudFormation references; network identifiers are external bindings. The filesystem uses the bucket root without a prefix.
+Earlier cross-session file tests passed for 4 KiB and 8 MiB files. The PUBLIC profiles have no shared mount.
 **Target:** add per-binding namespaces, persistent configuration/skills, conversation checkpoints, and recovery.
 Mount/root are deployment settings, not per-user identity resources.
 Example service configuration shape:
@@ -484,8 +503,8 @@ Example service configuration shape:
   "filesystemConfigurations": [
     {
       "s3FilesAccessPoint": {
-        "accessPointArn": "<configured-s3-files-access-point-arn>",
-        "mountPath": "/mnt/s3files"
+        "accessPointArn": "<cdk-generated-profile-access-point-arn>",
+        "mountPath": "/mnt/workspace"
       }
     }
   ]
@@ -495,8 +514,8 @@ Example service configuration shape:
 Proposed layout:
 
 ```text
-/mnt/s3files/
-  mcp/                              Shared tools, if configured
+/mnt/workspace/                     This profile's access-point root
+  mcp/                              Profile-local tools, if configured
   herdr/<binding-uuid>/
     repo/                           Files, .git, and uncommitted changes
     config/                         Non-secret tool configuration
@@ -533,8 +552,8 @@ The reviewed documentation describes reset after 14 days without invocation and 
 AgentCore Instances with capacity-provider EBS are another compute choice; they are not the current microVM deployment.
 See the [checkpoint proposal](SESSION_MANAGEMENT_PROPOSAL.md#6-opencode-database-and-checkpoint-strategy).
 
-Profile-selected working directory and mount-root startup are implemented. The filesystem sample starts at `/mnt/workspace`.
-The `/mnt/s3files/herdr/<binding-uuid>` layout above is a proposal, not the deployed layout.
+Profile-root startup is implemented. The filesystem sample mounts and starts at `/mnt/workspace`.
+The `/mnt/workspace/herdr/<binding-uuid>` layout above is a proposal, not the deployed layout.
 Persistent home, per-binding repository selection, automatic conversation capture, and that storage layout remain unimplemented.
 
 ## Resume semantics — target
@@ -764,7 +783,16 @@ These increments require no Cognito or Jindouyun platform dependency.
 
 ## Packaging and validation
 
-### Latest verification — 2026-10-19
+### Latest verification — 2026-10-20
+
+The final pinned coding-tool images and generic MCP bootstrap reached Runtime/DEFAULT version 4 and READY on all three profiles.
+The updates changed only container images. Both ARM64 builds, 230 Python tests, and 22 CDK tests passed.
+Cloud tests passed native builds, user-local CLI installation, MCP initialization/discovery/calls, and model-driven OpenCode MCP calls.
+A second S3-backed runtime rebuilt the disposable MCP from unchanged persistent definitions.
+Codex sandbox/model checks and both OpenCode activity probes passed. All disposable sessions received stop requests, and probe S3 files were removed.
+See the [coding-tool deployment results](../src/agentcore_runtime/README.md#coding-tools-and-generic-mcp-deployment--2026-10-20).
+
+### Launcher verification — 2026-10-19
 
 The launcher and root-legal-file image update reached Runtime/DEFAULT version 2 and READY on all three stacks, with unchanged ARNs.
 Cloud source-hash checks verified `run.sh`, the selected `run.py`, shared helpers, and copies of the two root legal files. Obsolete entrypoints were absent.

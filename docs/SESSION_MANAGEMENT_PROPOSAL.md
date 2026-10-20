@@ -305,7 +305,9 @@ AWS documents NFSv4.2, close-to-open consistency, and no hard-link support.
 Validate Git, dependency managers, rename/flush, and concurrency before relying on them.
 Use the mounted filesystem for work; avoid simultaneous direct edits to backing S3 objects.
 
-The Codex and plain OpenCode profiles use PUBLIC networking. The filesystem profile already uses VPC networking and an existing S3 Files access point.
+The Codex and plain OpenCode profiles use PUBLIC networking. S3-backed profiles use externally managed VPC networking and a dedicated access point per provision profile.
+Each S3-backed profile has a dedicated access point rooted at `/agent-filesystem/profiles/<profile-name>` and works directly at its runtime mount path.
+Per-binding namespaces within that profile directory remain a separate proposal.
 S3 Files needs VPC connectivity, mount targets, mount/write permissions, and the appropriate UID/GID.
 Shared-access-point directories organize work; they are not independent IAM security boundaries.
 

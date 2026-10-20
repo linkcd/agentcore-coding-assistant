@@ -19,7 +19,7 @@ Follow Herdr's workspace, tab, pane, and live-agent model.
 Use Jindouyun only as a reference for execution concepts.
 Exclude Cognito, end-user accounts, per-user runtime ownership, and a separate customer registry service.
 S3 Files persistence for coding files, configuration, skills, and OpenCode state is in scope.
-CDK configures an existing S3 Files mount for the filesystem profile. Mount readiness, `/mnt/workspace` startup, and 4 KiB/8 MiB cross-session file tests passed.
+TypeScript CDK manages storage using an external network and creates a dedicated S3 Files access point per filesystem profile. Earlier mount readiness, `/mnt/workspace` startup, and 4 KiB/8 MiB cross-session file tests passed.
 Per-binding namespaces, persistent home/configuration, skill discovery, and conversation checkpoints remain pending or unqualified.
 
 ## Repository conventions
@@ -79,6 +79,12 @@ They are a project style guide, not a claim of formal ASD-STE100 compliance.
 Version: `0.1.0`, experimental. Supported hosts: macOS and Linux, Python 3.11+, Herdr 0.9.5+.
 Python dependencies use uv; the CDK project uses npm. AgentCore SDK is pinned to `1.24.1`.
 Image versions are declared in the image definitions: OpenCode `1.18.30` and Codex `0.163.0`.
+Both image definitions also pin the common toolchain and download checksums.
+Coding tools use Python 3.15.0, compatibility Python 3.13.16, Node 24.22.0 LTS, uv 0.13.3, pnpm 12.14.0, Go 1.27.3, Rust 1.99.1, gh 2.102.0, AWS CLI 2.38.2, and ripgrep 15.2.0.
+The image base is digest-pinned. OS libraries use the selected Amazon Linux release.
+Shared startup repairs tool paths and defaults caches/build state to local `/tmp/agentcore` paths.
+`agentcore-mcp` is a generic locked Python tool launcher. Persistent projects supply their own manifests, lockfiles, and server commands.
+Keep specific MCP servers out of production defaults. The disposable test server exists only under tests.
 
 | File | Responsibility |
 | --- | --- |
@@ -131,7 +137,7 @@ Image versions are declared in the image definitions: OpenCode `1.18.30` and Cod
 27. **Codex example:** use the native Bedrock AWS credential provider. Do not override approval policy. Install the native restricted permission preset at build time; do not rewrite user configuration at startup. Cloud model/attachment, `date` tool, and scoped isolation checks passed. Its health service reports readiness only; broader tools and long-duration behavior remain unqualified.
 28. **Status sources:** Herdr supports both example kinds. Current remote status comes from active screen/title manifests through the host wrapper hint. Codex's missing work reporter is an AgentCore-health gap, not a lack of Herdr native detection.
 29. **Provision settings:** keep region, startup model, lifecycle, and optional VPC/S3 bindings in profiles. Derive network mode from VPC presence, account from CDK, inference region from Runtime region unless overridden, and working directory from the mount unless overridden. Reject duplicate derived environment keys and unused legacy model-permission fields.
-30. **Storage:** only the filesystem sample requires `src/agentcore_runtime/.env` bindings: subnets, security groups, and the S3 Files access point. The access point selects the mount root. Do not add `SHARED_S3_PREFIX`, direct-S3 grants, or a bucket metadata lookup to this access-point-only sample. It follows the AWS sample's UID/GID 1000 design. For imported root-owned directories, use AWS's documented directory-marker POSIX metadata repair after inspection and authorization; do not add a new mount or privilege mechanism. Separate-session 4 KiB/8 MiB write/read checks passed after that repair; broader recovery/performance qualification remains separate.
+30. **Storage:** networking and bucket ownership are external to the storage stack. The component `.env` supplies only bucket name and existing subnet/security-group IDs. UID/GID `1000:1000` and mode `755` are fixed CDK values. Each S3-backed profile creates one dedicated access point at `/agent-filesystem/profiles/<profile-name>`, mounted and used directly at its mount path (`/mnt/workspace` in the sample). Reject supplied access-point ARNs and sharing between profiles. Do not create another nested profile directory or add a workspace-base setting. Working-directory overrides stay inside the dedicated mount. Preserve existing files and require mount readiness. Worker IAM remains scoped to its generated access point, with no direct S3 grants. Do not change external networking or copy/delete data without authorization.
 31. **Model evidence:** the three samples specify only `inference.modelId`. OpenCode uses native catalog routing, including the image's single Kimi K3 entry and its Runtime SDK metadata. Codex defaults to its native Runtime provider for `global.openai.gpt-5.6-sol`. An optional `inference.bedrock-endpoint-type` override accepts exactly `"runtime"` or `"mantle"`. CDK exports `BEDROCK_ENDPOINT_TYPE` only for an explicit override; IAM permits both endpoints regardless. OpenCode creates its SDK-selection overlay only for that override. Codex has separate endpoint-specific providers and catalogs. Reject invalid explicit values, old field names, and duplicate environment settings. Earlier cloud results do not qualify a different endpoint, model, or image revision.
 32. **Retention:** the user explicitly authorized an Ireland-only exception to the zero-retention guard, Runtime mode `default`, and later Mantle mode `default`. A separate agent applied and verified the Mantle change. Managed policy `EnforceBedrockZeroRetention` v2 still excludes `eu-west-1` from its three retention-deny statements; its other-region rules and both logging-deny statements are unchanged. Both Ireland account settings are `default`. Keep account/privacy administration separate from profile deployment. For administrative Bedrock calls, use the authorized IAM identity with SigV4; the ambient Bedrock bearer key has only limited permissions. Do not broaden this exception or change other regions without authorization.
 33. **Configuration authority:** resolve component `.env`, the selected profile, and its image definition once at the CDK entrypoint. Pass resolved properties into the stack. Only `runtimeProfile` selects project configuration; reject per-field context overrides. Profile bindings must not fall back to or be overwritten by ambient shell variables. Keep authenticated account selection in the CDK Toolkit and fail if it is unresolved. Preserve construct IDs and the generated IAM-policy dependency when refactoring.
@@ -166,13 +172,10 @@ The privacy guard checks working files, the index, and history without printing 
 Build and test a runtime image after runtime changes:
 
 ```bash
-docker buildx build --platform linux/arm64 --load \
-  -f src/agentcore_runtime/agent_images/common/Dockerfile \
-  --build-arg ASSISTANT_DIR=opencode --build-arg NPM_PACKAGE=opencode-ai \
-  --build-arg NPM_VERSION=1.18.30 --build-arg EXECUTABLE=opencode \
-  -t herdr-agentcore-local:1.18.30 .
-HERDR_RUNTIME_TEST_IMAGE=herdr-agentcore-local:1.18.30 \
-  uv run --frozen pytest src/agentcore_runtime/tests/test_runtime_image.py -q --tb=short
+uv run --frozen python src/agentcore_runtime/tests/build_runtime_image.py opencode --tag herdr-agentcore-tools:opencode
+uv run --frozen python src/agentcore_runtime/tests/build_runtime_image.py codex --tag herdr-agentcore-tools:codex
+HERDR_RUNTIME_TEST_IMAGE=herdr-agentcore-tools:opencode CODEX_RUNTIME_TEST_IMAGE=herdr-agentcore-tools:codex \
+  uv run --frozen pytest src/agentcore_runtime/tests -q --tb=short
 ```
 
 The Docker tests verify configuration, native startup, root legal-file contents, real OpenCode activity, and crash cleanup.
@@ -211,7 +214,75 @@ Reject known update dialogs before sending model prompts. Wait for detached pane
 
 ## Current evidence and next work
 
-### Latest verified state — 2026-10-19
+### Latest verified state — 2026-10-20
+
+The user then requested and confirmed a complete fresh redeployment of all three runtime stacks plus storage, retaining `HerdrNetworkEgress`, the external network, and S3 data.
+All four old stacks were confirmed absent before creation. The replacement stacks are `CREATE_COMPLETE`; all Runtime/DEFAULT endpoints are version 1 and READY.
+Both ARM64 builds, 236 Python tests, 29 CDK tests, Ruff, cross-session S3 persistence, and final deployment diffs passed.
+All three saved Herdr profiles now reference the replacement runtimes. Six independent user sessions were reopened in three tabs and passed real UTC date, working-directory, listing, and filesystem checks.
+Codex/plain OpenCode start in `/home/agent`; S3 OpenCode starts directly at `/mnt/workspace`. Leave these six sessions open and discover their current bindings before operating on them.
+The external egress stack and backing S3 data were retained. Temporary deployment credentials were removed. No commit was created.
+
+### Previous S3-only migration — 2026-10-20
+
+The final selected mapping is 1:1 profile/access-point, with each root at `/agent-filesystem/profiles/<profile-name>` and the runtime mounted/started directly at `/mnt/workspace`.
+Shared-access-point inputs were removed. The S3 runtime was undeployed before replacement; its new Runtime/DEFAULT version 1 is READY.
+Only the three approved empty markers from the old duplicated S3 prefix were deleted. New-root checks confirm no nested profile folder or leftover probe data. Unrelated legacy S3 data remains intact.
+TypeScript, 29 CDK tests, Ruff, 86 runtime tests (six opt-in skips), the ARM64 OpenCode build, live persistence, Herdr model/attach/shell-time, and generic MCP checks passed.
+The first MCP model probe returned text without a tool call and failed its assertion; a fresh retry passed. Every disposable probe received a stop request.
+Two replacement S3 user sessions, `s3-1` and `s3-2`, confirmed `/mnt/workspace` and remain open. The existing Codex/plain-OpenCode user sessions were preserved. Discover their live state before acting.
+The S3 profile registry was updated to the replacement runtime. Storage and external network stacks were retained. Other runtime images were not redeployed for this S3-only change.
+The temporary Docker credential file and token-seed files were removed. No commit was created.
+
+### Earlier same-day reviewed deployment
+
+The user required superseded runtime/storage stacks to be undeployed before the final deployment, retaining the separately authorized `HerdrNetworkEgress` stack.
+The final deployment has all three runtime stacks, `HerdrAgentStorage`, and `HerdrNetworkEgress` at `CREATE_COMPLETE`. All Runtime/DEFAULT versions are 1 and READY.
+The saved numbered Herdr profiles were replaced with current outputs. Managed access points use `/<profile-name>`; each profile works in `<mountPath>/profiles/<profile-name>`.
+UID/GID `1000:1000` and mode `755` are fixed CDK values. `.env` contains only bucket name and existing subnet/security-group IDs.
+Both ARM64 builds, 235 Python tests, 30 CDK tests, Ruff, and privacy checks passed. All three isolated Herdr flows passed model, runtime-role, detach/reattach, context follow-up, shell-time, and stop checks.
+Native tool/build/install and generic MCP checks passed on all runtimes. Both OpenCode runtimes made real MCP model calls and passed activity/question/process-death checks. Codex sandbox/model checks passed.
+S3 checks verified the profile directory, non-root cross-session persistence, MCP environment reconstruction, and removal of only probe files.
+Two temporary profile directories under one access point loaded distinct MCP configurations across fresh sessions. This verifies shared-folder configuration selection, not a security boundary or a second deployed shared-access-point runtime.
+All disposable sessions received stop requests and isolated Herdr servers stopped. The temporary Docker credential file was removed. All final CDK diffs were clean.
+The separate network stack uses the retained VPC/subnets and restores NAT egress. Its operator-owned CDK definition and inputs are under ignored `.local/deployments/network-egress*`; they are not part of the storage stack.
+
+### Earlier teardown and deployment — 2026-10-20
+
+**Teardown status:** the user explicitly authorized deletion of all three Herdr runtime stacks, the adopted infrastructure stack, and the older AWS-sample OpenCode runtime. Keep the local Herdr plugin, backing S3 bucket/data, and CDK bootstrap.
+All four runtimes are absent. The three runtime stacks are deleted. The S3 stack's first deletion timed out after the runtime disappeared; a checked CDK retry completed it.
+The active S3 user session received a stop request and its pane was closed. Fifteen older recorded sessions were already absent; their existing history was preserved.
+The infrastructure stack initially reached `DELETE_FAILED` because AWS-managed `agentic_ai` interfaces held its private subnets and security group.
+Normal EC2 detach requests returned `OperationNotPermitted`. No remaining runtime version, browser, or code interpreter was found using those subnets.
+Its S3 Files filesystem, access points, service role, NAT/public-network resources are deleted. The original S3 configuration object and bootstrap stack still exist.
+The user then authorized stack removal with its network retained. CloudFormation reached `DELETE_COMPLETE` with `VPC`, `PrivateSubnet1`, `PrivateSubnet2`, and `SecurityGroup` retained and verified available.
+Those network resources are now outside the old stack's management. Do not delete them as cleanup. The NAT gateway and internet routing were deleted earlier; network access must be restored externally before deployment.
+Current CDK is storage-only, uses existing subnet/security-group IDs, and uses the bucket root without a filesystem prefix. Its storage stack name comes from the provision profile.
+TypeScript and 27 CDK tests passed. This refactor has not been deployed. Saved runtime outputs and profiles are historical until redeployment.
+
+The user authorized adoption of the existing AWS sample infrastructure into TypeScript CDK and selected an empty dedicated workspace.
+The adoption preserved all 23 infrastructure resource identities and properties. Both stacks reached `UPDATE_COMPLETE`.
+The S3 profile now owns a generated access point rooted at `/profiles/opencode-s3filesystem-agentcore-profile-3`; mount path remains `/mnt/workspace`.
+Its Runtime/DEFAULT version is 5 and READY. Other runtimes remain at version 4. The runtime ARN and connection descriptor are unchanged.
+Two disposable sessions passed empty-root/no-MCP checks, a non-root 4 KiB write, and a matching cross-session read. Cleanup left the root empty and requested stop for both sessions.
+All 26 CDK tests, TypeScript, the default Python run (212 passed, 18 skipped), 21 OpenCode image tests, and the privacy guard passed. Final diffs for the two deployed stacks were clean.
+The existing sample access point and original data remain intact. No workspace data was copied. Separate-profile mount isolation has synthesis coverage; a second profile has not been deployed for a live isolation test.
+
+The common coding toolchain and generic `agentcore-mcp` bootstrap are deployed to all three existing stacks.
+Image-only diffs preserved runtime identities and configuration. Final Runtime/DEFAULT version 4 is READY for each profile.
+Both ARM64 builds, 230 Python tests, 22 CDK tests, native build/install checks, and generic MCP protocol checks passed.
+Both OpenCode profiles passed a real model call to the disposable MCP tool. A second S3-backed session rebuilt its local environment from unchanged persistent definitions.
+Codex sandbox/model checks and both OpenCode activity probes passed. Probe files were removed and stop was requested for every disposable session.
+All three stacks reached UPDATE_COMPLETE, and final CDK diffs showed no changes.
+The initial headless MCP model check needed explicit closed stdin; its corrected rerun passed on the same image.
+The sandbox preset and production MCP registrations were not changed. Shared helpers are installed under `/usr/local/lib/herdr-agentcore` so Codex can read them.
+`uvx` forwards to `uv tool run`; Rust uses the linker cache; Go uses explicit `GOROOT` and an initial telemetry-off setting.
+Version 4 uses `PNPM_CONFIG_STORE_DIR`; pnpm 12 ignores the older npm-style variable. Effective local store paths passed in both images and cloud runtimes.
+One S3 model probe returned no completed tool event; a fresh retry passed, including second-session MCP reconstruction and cleanup.
+The final OpenCode publish needed a temporary Docker credential store after the desktop helper stalled. Its credential file was removed after deployment.
+Per-binding workspace allocation and conversation recovery remain unimplemented. Do not treat a persistent virtual environment as portable across runtimes.
+
+### Previous verified state — 2026-10-19
 
 These results are dated observations. Recheck live state before acting on a deployment or session.
 AWS runtime versions, assistant package versions, and descriptor version 1 are separate values.

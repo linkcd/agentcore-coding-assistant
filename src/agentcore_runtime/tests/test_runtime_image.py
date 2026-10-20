@@ -126,6 +126,7 @@ def test_missing_runtime_settings_fail_before_launch():
 
 
 def test_launch_forwards_session_argv_and_preserves_user_configuration(monkeypatch, tmp_path):
+    monkeypatch.setenv("AGENTCORE_TOOL_ROOT", str(tmp_path / "runtime"))
     config = tmp_path / "opencode.json"
     original = '{"mcp": {}, "permission": {"edit": "ask"}}'
     config.write_text(original)
@@ -261,7 +262,7 @@ def test_real_opencode_drives_runtime_health():
             "-e",
             "OPENCODE_DISABLE_DEFAULT_PLUGINS=1",
             os.environ["HERDR_RUNTIME_TEST_IMAGE"],
-            "python3.11",
+            "/usr/local/bin/python3",
             "/tmp/activity-smoke.py",
         ],
         capture_output=True,

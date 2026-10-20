@@ -10,12 +10,8 @@
     "idleRuntimeSessionTimeout": 900,
     "maxLifetime": 28800
   },
-  "vpc": {
-    "subnetIds": "${SHARED_VPC_SUBNET_IDS}",
-    "securityGroupIds": "${SHARED_VPC_SECURITY_GROUP_IDS}"
-  },
   "s3Files": {
-    "accessPointArn": "${SHARED_S3_FILES_ACCESS_POINT_ARN}",
+    "storageStackName": "HerdrAgentStorage",
     "mountPath": "/mnt/workspace",
     "readOnly": false
   }

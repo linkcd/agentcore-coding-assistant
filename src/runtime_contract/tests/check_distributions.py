@@ -53,7 +53,8 @@ def check_documents(root):
                 assert unquote(parsed.fragment) in anchors(target), f"Missing anchor: {link}"
             links += 1
     requirements = (root / "docs/REQUIREMENTS.md").read_text()
-    for prefix, count in {"F": 18, "L": 12, "P": 7, "H": 10, "C": 9}.items():
+    requirement_counts = {"F": 20, "L": 12, "P": 7, "H": 10, "C": 9}
+    for prefix, count in requirement_counts.items():
         for number in range(1, count + 1):
             assert requirements.count(f"| {prefix}{number:02} |") == 1
     for name in ("LICENSE", "NOTICE"):
@@ -64,7 +65,10 @@ def check_documents(root):
             if not {"node_modules", "cdk.out"}.intersection(path.parts)
         ]
         assert not nested, f"Project legal files must be kept at the repository root: {nested}"
-    print(f"Verified {len(documents)} documents, {links} local links, and 56 requirement IDs.")
+    print(
+        f"Verified {len(documents)} documents, {links} local links, "
+        f"and {sum(requirement_counts.values())} requirement IDs."
+    )
 
 
 def check_packages(root, directory):

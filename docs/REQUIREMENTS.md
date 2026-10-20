@@ -81,6 +81,8 @@ Process replacement and recovery after compute termination remain next-increment
 | F16 | Use the execution role and a refreshable SDK provider for Bedrock. Do not fetch, export, or persist credential snapshots. |
 | F17 | Use standard CDK synth/diff/deploy/destroy and CloudFormation state. Permit sample sessions to switch available Bedrock models without a per-model IAM update. Do not overwrite connector profiles on deployment failure. |
 | F18 | Start new agents without a profile picker. Honor CLI/controller override before the saved default. Reject invalid or ambiguous selection before remote work. |
+| F19 | Provide a version-pinned common coding toolchain with usable executable/library paths for non-root agent subprocesses. Keep default dependency caches and build state on local runtime storage. |
+| F20 | Support generic Python MCP servers through explicit project manifests, lockfiles, and server commands. Rebuild local environments on replacement compute, preserve persistent definitions, and keep setup output off MCP stdout. Do not register a specific server as a production default. |
 
 ## Lifecycle requirements — next increment
 
@@ -109,7 +111,7 @@ The remaining requirements cover complete coding-state persistence, not only a w
 
 | ID | Requirement |
 | --- | --- |
-| P01 | Use an S3 Files access point mounted by the runtime. Select mount/root through deployment configuration, without per-user storage provisioning. |
+| P01 | Create one dedicated access point per S3-backed profile at /agent-filesystem/profiles/<profile-name>. Mount and start directly at the profile mount path. Reject access-point sharing between profiles. Manage storage through TypeScript CDK using external networking and a bucket-root filesystem. |
 | P02 | Persist repositories, Git metadata, uncommitted changes, configuration, skills, conversation data, recovery metadata, and selected artifacts. |
 | P03 | Give each binding a stable persistent root. Reuse it after replacement. A new session ID must not silently reset files. |
 | P04 | Support a remote Working Directory within the persistent root, including existing repositories. Keep it distinct from the host pane's directory. |
@@ -163,7 +165,10 @@ Reject invalid explicit values, old field names, and duplicate derived endpoint 
 Resolve deployment choices from the selected provision profile and component `.env` at the CDK entrypoint.
 Pass resolved properties into the stack. Reject per-field context overrides and ignore ambient shell variables for profile bindings.
 Use the authenticated CDK Toolkit for account identity. Keep credentials outside deployment files.
-The filesystem sample uses access-point-only permissions and requires no backing-bucket name or prefix input.
+The filesystem worker uses access-point-only permissions. The infrastructure service role uses the bucket configuration from `.env`.
+CDK creates profile access points and passes their generated ARNs to runtimes. Users do not supply access-point ARNs.
+Do not create or delete the external VPC, subnets, security groups, or bucket. The filesystem uses the bucket root; access points select profile folders.
+New profile roots start empty; copying existing data is a separate explicit operation.
 Keep runtime modules directly under their component directory without a duplicate package folder.
 Keep root workspace configuration, the Herdr manifest, and CI in their standard locations.
 Keep project `LICENSE` and `NOTICE` sources only at the repository root. Package and image builds must include their contents without maintaining source copies in each component.
@@ -173,7 +178,7 @@ The supplied `/app/run.sh` executes the selected image's `/app/run.py`; shared s
 
 The current implementation does not provide:
 
-- Creation of VPC/S3 Files resources or gateway infrastructure. Runtime configuration can reference existing VPC/S3 Files resources.
+- Gateway or network infrastructure. TypeScript CDK manages storage and dedicated profile access points using external network bindings.
 - Automated EC2/ECS management deployment, recovery, or failover.
 - Windows terminal support.
 - Automatic conversation resume or compute recovery.
@@ -216,7 +221,34 @@ Cognito, per-user runtime authorization catalogs, DynamoDB customer registries, 
 | Remote Working Directory | Start in the selected persistent repository. | Profile-selected working directory and mount-root startup are implemented. Both filesystem sessions started in `/mnt/workspace`. Per-binding repository selection and recovery remain pending. |
 | Multiple shells | Use separate shell IDs with explicit operation scope. Preserve sibling work. | Not implemented. |
 
-### Latest verification — 2026-10-19
+### Latest verification — 2026-10-20
+
+The latest user-confirmed fresh deployment removed and recreated all runtime/storage stacks while retaining external network resources and S3 data.
+All new Runtime/DEFAULT endpoints are version 1 and READY. Both ARM64 builds, 236 Python tests, 29 CDK tests, and cross-session S3 persistence passed.
+Six independent user sessions in three tabs completed real time and directory checks and were left open. Final deployment diffs were clean.
+
+The final reviewed version was deployed after the superseded runtime/storage stacks were removed. All five deployed stacks are `CREATE_COMPLETE`; all three Runtime/DEFAULT versions are 1 and READY.
+The separately authorized network egress stack restores internet access while the storage stack remains network-independent.
+Both ARM64 builds, 235 Python tests, 30 CDK tests, and all three Herdr E2E flows passed. Native model, shell, tool/build/install, MCP, OpenCode activity, and Codex sandbox checks passed.
+S3 verification covered profile-directory startup, cross-session files, MCP environment reconstruction, and distinct configuration discovery for two directories sharing one access point.
+That shared-directory test does not claim access isolation. All disposable sessions received stop requests and only test files were removed. Final stack diffs were clean.
+
+Earlier same-day results:
+
+TypeScript CDK adoption preserved all 23 original sample infrastructure resources. The infrastructure and S3 runtime stacks reached `UPDATE_COMPLETE`.
+The S3 runtime/DEFAULT version 5 uses a generated profile-specific access point and an empty root. Other runtimes remain at version 4.
+Two disposable sessions verified empty-root startup, no inherited MCP servers, a non-root 4 KiB write, and a matching cross-session read. Cleanup restored an empty root.
+All 26 CDK tests passed, including two-profile access-point/root/IAM separation. A live second-profile isolation check remains unqualified.
+The default Python run passed 212 tests with 18 opt-in skips. Final CDK diffs and the privacy audit were clean.
+
+The final coding-tool images reached Runtime/DEFAULT version 4 and READY on all three existing profiles.
+The diffs changed only container images. Both ARM64 builds, 230 Python tests, and 22 CDK tests passed.
+Fresh sessions passed tool discovery, native builds, non-root CLI installation, and generic MCP initialization/discovery/tool calls.
+Both OpenCode profiles completed model-driven calls to the disposable MCP server. Codex passed its native sandbox and model-driven shell check.
+A second S3-backed runtime rebuilt the MCP environment from unchanged persistent definitions. Cleanup removed only the probe files.
+This verifies F19/F20 for the tested tools and fixture. It does not implement per-binding allocation or conversation recovery.
+
+### Launcher verification — 2026-10-19
 
 Both ARM64 builds, TypeScript, 21 CDK tests, and all 217 Python tests passed for the launcher and root-legal-file revision.
 The image-only update reached Runtime/DEFAULT version 2 and READY on all three profiles, preserving ARNs and the absence of an endpoint override.

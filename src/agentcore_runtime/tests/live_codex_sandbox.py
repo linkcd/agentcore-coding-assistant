@@ -57,7 +57,7 @@ print(json.dumps(result))
 assert all(value for key,value in result.items() if key != 'date')
 """
     result = subprocess.run(['codex','sandbox','-P',config['default_permissions'],
-                             '-C',str(workspace),'--','python3.11','-c',checks],
+                             '-C',str(workspace),'--','/usr/local/bin/python3','-c',checks],
                             cwd=workspace,stdin=subprocess.DEVNULL,capture_output=True,text=True,timeout=45)
     print('SANDBOX_CHECK ' + result.stdout.strip(), flush=True)
     # An unmounted parent can be writable sandbox-local tmpfs. Verify the host file.
@@ -100,7 +100,10 @@ def run(runtime_arn: str, aws_profile: str | None = None):
             agentRuntimeArn=runtime_arn,
             runtimeSessionId=identifier,
             qualifier=spec.endpoint,
-            body={"command": shlex.join(["python3.11", "-c", remote_script()]), "timeout": 200},
+            body={
+                "command": shlex.join(["/usr/local/bin/python3", "-c", remote_script()]),
+                "timeout": 200,
+            },
         )
         code = None
         for event in response["stream"]:

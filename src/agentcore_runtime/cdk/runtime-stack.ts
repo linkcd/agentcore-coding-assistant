@@ -1,16 +1,22 @@
 import { ArnFormat, CfnOutput, Stack, StackProps, Tags, aws_bedrockagentcore as agentcore,
-  aws_ecr_assets as assets, aws_iam as iam } from "aws-cdk-lib";
+  aws_ecr_assets as assets, aws_iam as iam, aws_s3files as s3files } from "aws-cdk-lib";
 import { Construct } from "constructs";
 import * as path from "node:path";
 import { connectionDescriptor, validateCommand } from "../../runtime_contract/connection";
 import { REPOSITORY_ROOT, RuntimeProfile } from "./profile";
 import { AgentImage, IMAGE_DIRECTORY } from "./image";
+import { RuntimeInfrastructure } from "./infrastructure-stack";
+import { directoryPath } from "./infrastructure-config";
+
+// Fixed contract with the non-root agent user in the supplied runtime images.
+const WORKSPACE_POSIX = { uid: "1000", gid: "1000", permissions: "755" } as const;
 
 export interface RuntimeProps extends Omit<StackProps, "env" | "stackName"> {
   account: string;
   profileName: string;
   profile: RuntimeProfile;
   imageDefinition: AgentImage;
+  infrastructure?: RuntimeInfrastructure;
 }
 
 export class RuntimeStack extends Stack {
@@ -83,13 +89,31 @@ export class RuntimeStack extends Stack {
       } };
     }
     const filesystems: agentcore.CfnRuntime.FilesystemConfigurationProperty[] = [];
+    let profileDirectory: string | undefined;
     if (props.profile.s3Files) {
-      if (!props.profile.vpc) throw new Error("S3 Files requires VPC configuration");
-      const { accessPointArn } = props.profile.s3Files;
-      if (accessPointArn.split(":")[3] !== this.region || accessPointArn.split(":")[4] !== this.account) {
-        throw new Error("S3 Files access point must match the effective deployment account and region");
+      const infrastructure = props.infrastructure;
+      if (!infrastructure) throw new Error("S3 Files requires managed infrastructure bindings");
+      if (infrastructure.region !== this.region || infrastructure.account !== this.account) {
+        throw new Error("Infrastructure must match the effective deployment account and region");
       }
-      const fileSystemArn = accessPointArn.split("/access-point/")[0];
+      if (props.profile.vpc) throw new Error("S3 Files network settings come from the external network bindings");
+      if (!directoryPath(`/${props.profileName}`, 1)) throw new Error("Invalid profile access-point root directory");
+      const rootDirectory = `/agent-filesystem/profiles/${props.profileName}`;
+      profileDirectory = props.profile.s3Files.mountPath;
+      const accessPoint = new s3files.CfnAccessPoint(this, "WorkspaceAccessPoint", {
+        fileSystemId: infrastructure.fileSystemId,
+        posixUser: { uid: WORKSPACE_POSIX.uid, gid: WORKSPACE_POSIX.gid },
+        rootDirectory: { path: rootDirectory, creationPermissions: {
+          ownerUid: WORKSPACE_POSIX.uid, ownerGid: WORKSPACE_POSIX.gid,
+          permissions: WORKSPACE_POSIX.permissions,
+        } },
+      });
+      const accessPointArn = accessPoint.attrAccessPointArn;
+      new CfnOutput(this, "WorkspaceRootDirectory", { value: rootDirectory });
+      const fileSystemArn = infrastructure.fileSystemArn;
+      network = { networkMode: "VPC", networkModeConfig: {
+        subnets: infrastructure.subnetIds, securityGroups: infrastructure.securityGroupIds,
+      } };
       role.addToPolicy(new iam.PolicyStatement({
         actions: ["s3files:ClientMount",
           ...(props.profile.s3Files.readOnly ? [] : ["s3files:ClientWrite"])],
@@ -105,8 +129,16 @@ export class RuntimeStack extends Stack {
       filesystems.push({ s3FilesAccessPoint: {
         accessPointArn, mountPath: props.profile.s3Files.mountPath,
       } });
+      new CfnOutput(this, "WorkspaceAccessPointArn", { value: accessPointArn });
+      new CfnOutput(this, "ProfileWorkingDirectory", { value: profileDirectory });
     }
-    const workingDirectory = props.profile.workingDirectory ?? props.profile.s3Files?.mountPath;
+    const workingDirectory = props.profile.workingDirectory ?? profileDirectory;
+    if (profileDirectory && workingDirectory) {
+      const relative = path.posix.relative(profileDirectory, workingDirectory);
+      if (relative === ".." || relative.startsWith("../") || path.posix.isAbsolute(relative)) {
+        throw new Error("S3 workingDirectory must be inside this profile's access-point mount");
+      }
+    }
     const runtime = new agentcore.CfnRuntime(this, "Runtime", {
       agentRuntimeName: runtimeName,
       agentRuntimeArtifact: { containerConfiguration: { containerUri: image.imageUri } },
@@ -122,6 +154,7 @@ export class RuntimeStack extends Stack {
         BEDROCK_INFERENCE_REGION: inferenceRegion,
         ...(endpointType !== undefined ? { BEDROCK_ENDPOINT_TYPE: endpointType } : {}),
         ...(workingDirectory ? { AGENTCORE_WORKDIR: workingDirectory } : {}),
+        ...(profileDirectory ? { AGENTCORE_PROFILE_DIRECTORY: profileDirectory } : {}),
         ...(props.profile.s3Files ? { AGENTCORE_REQUIRED_MOUNT: props.profile.s3Files.mountPath } : {}),
       },
       lifecycleConfiguration: props.profile.lifecycle,

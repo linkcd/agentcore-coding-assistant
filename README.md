@@ -121,8 +121,12 @@ npm --prefix src/agentcore_runtime/cdk run cdk -- synth \
 This command needs a local Docker engine, Buildx/ARM64 support, and AWS deployment permissions.
 Use `cdk synth` to inspect templates and `cdk diff` to review changes before deployment.
 The target account/region needs CDK bootstrap resources. Follow the [runtime README](src/agentcore_runtime/README.md) to fill resource bindings, review, deploy, and register each project.
-All Runtime regions are `eu-west-1`. Only the filesystem example needs `src/agentcore_runtime/.env` for subnet, security-group, and access-point bindings.
-CDK resolves the account through the authenticated Toolkit. The filesystem sample uses access-point permissions without a bucket/prefix input or metadata lookup.
+All Runtime regions are `eu-west-1`. The filesystem example reads its infrastructure settings from `src/agentcore_runtime/.env`.
+TypeScript CDK manages the S3 Files filesystem, service role, and mount targets. The selected S3 profile owns a dedicated access point.
+The VPC, subnets, security groups, and bucket are external. Supply the existing subnet/security-group IDs, bucket, and access-point directory settings in `.env`.
+The filesystem uses the bucket root. Each profile's access point selects `agent-filesystem/profiles/<profile-name>/`, presented directly at `/mnt/workspace`.
+The storage stack name belongs to `s3Files.storageStackName` in the provision profile, not `.env`. Access-point ARNs are generated outputs.
+CDK resolves the account through the authenticated Toolkit. Worker roles retain access-point-scoped permissions without direct bucket access or a metadata lookup.
 The selected profile and component `.env` control deployment settings. Per-field CDK context overrides and ambient shell binding overrides are rejected or ignored, respectively.
 For the S3 example, copy `src/agentcore_runtime/.sample.env` to `src/agentcore_runtime/.env` if needed and fill its bindings. External profile directories are not supported.
 The sample `inference` objects contain only `modelId`. OpenCode uses its model catalog; the Codex image defaults to its native Runtime provider.
@@ -174,9 +178,28 @@ See the [contract README](src/runtime_contract/README.md) for fields and version
 
 ## Status and limits
 
-The latest verification was on 2026-10-19.
-All three numbered profiles run in `eu-west-1`. After the launcher image update, every Runtime/DEFAULT endpoint reached version 2 and READY.
+**Current deployment state — 2026-10-20:** the reviewed version is deployed after the superseded runtime/storage stacks were removed.
+All three runtime stacks, `HerdrAgentStorage`, and the separately authorized `HerdrNetworkEgress` stack are `CREATE_COMPLETE`.
+Every runtime and `DEFAULT` endpoint is version 1 and `READY`. The three saved Herdr profiles point to the new runtime ARNs.
+The S3 profile now mounts and works directly at `/mnt/workspace`. Its access point is rooted at `/agent-filesystem/profiles/opencode-s3filesystem-agentcore-profile-3`.
+The latest fresh deployment removed and recreated all three runtime stacks and storage, retaining the external network and S3 data.
+Both ARM64 image builds, 236 Python tests, and 29 CDK tests passed. Six fresh user sessions passed real model/time/directory checks, and cross-session S3 persistence passed.
+Fresh-session storage checks and two profile-configuration directories under one access point passed. All test files and disposable sessions were cleaned up or received stop requests.
+Internet egress remains available through the retained network stack. The storage/runtime stacks still do not own the VPC or subnets.
+The earlier deployment and teardown results below are historical evidence.
+
+The latest verification was on 2026-10-20.
+The repository now manages the sample infrastructure with TypeScript CDK and creates a dedicated access point per S3 profile.
+The S3 runtime is at version 5; the other two runtimes remain at version 4. Both storage-related stacks reached `UPDATE_COMPLETE` with all original infrastructure identities preserved.
+The new S3 profile root starts empty. Two fresh sessions verified mount access, non-root file persistence, cleanup, and absence of inherited MCP configuration.
+See [managed storage setup](src/agentcore_runtime/README.md#profile-specific-access-points) and [adoption results](src/agentcore_runtime/README.md#managed-infrastructure-and-profile-storage--2026-10-20).
+All three numbered profiles run in `eu-west-1`. After the coding-tool image update, every Runtime/DEFAULT endpoint reached version 4 and READY.
 These are AWS runtime versions, not assistant package or descriptor versions.
+The images include pinned Python 3.15/3.13, Node LTS, uv/uvx, pnpm, Go, Rust, GitHub CLI, AWS CLI, and common build tools.
+The shared launcher sets tool paths and local cache defaults. Generic `agentcore-mcp` support rebuilds locked dependencies from an explicit persistent tool project.
+No particular MCP server is a production default.
+Both ARM64 images, 230 Python tests, and 22 CDK tests passed. Fresh cloud sessions passed native builds, generic MCP calls, and S3 cross-session MCP reconstruction.
+See the [tool inventory and setup](src/agentcore_runtime/README.md#coding-tools-and-mcp-environments) and [deployment verification](src/agentcore_runtime/README.md#coding-tools-and-generic-mcp-deployment--2026-10-20).
 Codex with GPT-5.6 Sol passed native Bedrock Runtime inference, sandbox checks, attachment, a context-preserving follow-up, and a real shell-tool call. Ireland Runtime retention is `default`.
 Both OpenCode profiles passed real Kimi model calls.
 The filesystem permission issue is fixed using AWS's documented directory-marker metadata procedure. Separate sessions wrote and read 4 KiB and 8 MiB files successfully.
@@ -191,7 +214,8 @@ Six user-requested sessions were left open after the latest checks. They remain 
 The older custom-managed and pre-numbered deployments were retired. Their output files and test results are historical records.
 
 All profiles use a 900-second idle timeout and a 28,800-second compute maximum.
-The PUBLIC profiles use ephemeral coding files. The filesystem profile mounts shared coding files at `/mnt/workspace`; its home and conversation state remain ephemeral.
+The PUBLIC profiles use ephemeral coding files. The filesystem profile mounts its own persistent root at `/mnt/workspace`; its home and conversation state remain ephemeral.
+Sessions of the same provision profile share its directory. Each S3-backed profile has its own dedicated access point and scoped IAM permissions.
 OpenCode's tracked work produces `HealthyBusy`. An unanswered question can be idle when no other tracked work runs.
 Earlier cloud activity tests and current local image tests cover that bridge. Codex has readiness health only; its work-event reporter is not implemented.
 OpenCode's picker routes model entries through Runtime or Mantle. Both routes are now included in the execution-role policy; account and model-specific requirements still apply.
@@ -216,6 +240,7 @@ Standard SSM access and native Herdr SSH access are separate options. Neither ch
 - [Requirements](docs/REQUIREMENTS.md): scope and acceptance criteria.
 - [Connect an existing runtime](docs/CONNECT_EXISTING_RUNTIME.md): step-by-step setup and verification.
 - [Design](docs/DESIGN.md): architecture, glossary, and validation evidence.
+- [Profile storage mapping](docs/STORAGE_MAPPING.md): 1:1 profile/access-point mapping, runtime paths, and access boundaries.
 - [Session proposal](docs/SESSION_MANAGEMENT_PROPOSAL.md): hosting, identity, and durable recovery.
 - [Plugin review](docs/PLUGIN_GUIDELINES_REVIEW.md): Herdr's public extension contract.
 - [Agent instructions](agent.md): repository conventions and ASD-STE100-style writing rules.
