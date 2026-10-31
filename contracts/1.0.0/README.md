@@ -1,6 +1,6 @@
 # Pinned connection contract
 
-The `herdr-to-agentcore` plugin repository owns this format.
+The [linkcd/herdr-agentcore](https://github.com/linkcd/herdr-agentcore) plugin repository owns this format.
 This repository contains a checksum-pinned copy of its schema and conformance cases.
 No plugin source or shared implementation package is required to build or deploy a runtime.
 
@@ -35,9 +35,10 @@ The schema cannot express that aggregate rule. The runtime producer checks it in
 ## Update procedure
 
 1. Obtain the schema and fixtures from an explicit plugin release.
-2. Replace the two JSON files together and update the source release and SHA-256 values in `upstream.json`.
-3. Run the CDK checks and tests, including the pinned conformance cases.
-4. Review the contract changes before changing the exported descriptor version.
+2. Store the files under `contracts/MAJOR.MINOR.PATCH/` and record the exact version, source release, and SHA-256 values in that directory's `upstream.json`.
+3. Set the producer's `CONTRACT_VERSION` to the selected release. Code and tests resolve its directory from that constant.
+4. Run the CDK checks and tests, including the pinned conformance cases.
+5. Review the contract changes before changing the exported descriptor version.
 
 Keep published descriptor versions stable.
 The consumer rejects unknown fields; adding fields can require a new version.
@@ -47,6 +48,6 @@ The `export-connection` command validates a CDK output and writes a standalone d
 
 The producer emits contract `1.0.0`. The exporter accepts stable `1.x.y` versions and preserves the input descriptor's version.
 Build metadata is accepted. Prereleases, numeric versions, incomplete versions, and other major versions are rejected.
-The `v1/` directory groups contract major version 1. The transport name identifies the Shell protocol independently.
+The `contracts/1.0.0/` directory pins this exact release. The transport name identifies the Shell protocol independently.
 Incompatible wire fields or validation behavior require a major version. Minor versions preserve the accepted payload shape; patches contain compatible fixes or documentation changes.
 Plugin releases, runtime images, and contract versions are independent.

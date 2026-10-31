@@ -45,19 +45,28 @@ def check_documents():
 
 
 def check_contract():
-    directory = ROOT / "contracts/v1"
-    pin = json.loads((directory / "upstream.json").read_text())
-    for name, expected in pin["sha256"].items():
-        assert hashlib.sha256((directory / name).read_bytes()).hexdigest() == expected, name
-    schema = json.loads((directory / "connection.schema.json").read_text())
-    Draft202012Validator.check_schema(schema)
-    validator = Draft202012Validator(schema)
-    cases = json.loads((directory / "fixtures.json").read_text())
-    for case in cases["valid"]:
-        validator.validate(case["descriptor"])
-    for case in cases["invalid"]:
-        assert not validator.is_valid(case["descriptor"]), case["name"]
-    print("Verified the independently pinned contract schema and fixtures.")
+    directories = sorted(path for path in (ROOT / "contracts").iterdir() if path.is_dir())
+    assert directories, "At least one pinned contract release is required"
+    version_pattern = r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
+    for directory in directories:
+        assert re.fullmatch(version_pattern, directory.name)
+        pin = json.loads((directory / "upstream.json").read_text())
+        assert pin["descriptor_version"] == directory.name
+        assert pin["source_path"] == f"contracts/{directory.name}"
+        assert set(pin["sha256"]) == {"connection.schema.json", "fixtures.json"}
+        for name, expected in pin["sha256"].items():
+            assert hashlib.sha256((directory / name).read_bytes()).hexdigest() == expected, name
+        schema = json.loads((directory / "connection.schema.json").read_text())
+        assert schema["properties"]["version"]["default"] == directory.name
+        assert schema["$id"] == f"urn:herdr-agentcore:connection:{directory.name}"
+        Draft202012Validator.check_schema(schema)
+        validator = Draft202012Validator(schema)
+        cases = json.loads((directory / "fixtures.json").read_text())
+        for case in cases["valid"]:
+            validator.validate(case["descriptor"])
+        for case in cases["invalid"]:
+            assert not validator.is_valid(case["descriptor"]), case["name"]
+    print(f"Verified {len(directories)} pinned SemVer contract release(s).")
 
 
 def check_boundaries():

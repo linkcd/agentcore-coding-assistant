@@ -7,7 +7,7 @@ import Ajv2020 from "ajv/dist/2020";
 import { CONTRACT_VERSION, connectionDescriptor, validateCommand } from "../connection";
 import { descriptorFromOutputs } from "../export-connection";
 
-const directory = path.resolve(__dirname, "../../../../contracts/v1");
+const directory = path.resolve(__dirname, "../../../../contracts", CONTRACT_VERSION);
 const read = (name: string) => JSON.parse(fs.readFileSync(path.join(directory, name), "utf8"));
 const cases = read("fixtures.json");
 const validate = new Ajv2020({ strict: false }).compile(read("connection.schema.json"));
@@ -23,7 +23,10 @@ test("TypeScript compilation includes only project-local source paths", () => {
 
 test("contract files match their pinned upstream checksums", () => {
   assert.equal(read("upstream.json").descriptor_version, CONTRACT_VERSION);
+  assert.equal(read("upstream.json").source_path, `contracts/${CONTRACT_VERSION}`);
   assert.equal(read("connection.schema.json").properties.version.default, CONTRACT_VERSION);
+  assert.equal(read("connection.schema.json").$id, `urn:herdr-agentcore:connection:${CONTRACT_VERSION}`);
+  assert.deepEqual(Object.keys(read("upstream.json").sha256).sort(), ["connection.schema.json", "fixtures.json"]);
   for (const [name, expected] of Object.entries(read("upstream.json").sha256)) {
     assert.equal(createHash("sha256").update(fs.readFileSync(path.join(directory, name))).digest("hex"), expected);
   }

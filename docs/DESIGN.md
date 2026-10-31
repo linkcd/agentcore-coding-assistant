@@ -37,7 +37,7 @@ See [storage mapping](STORAGE_MAPPING.md) for paths and boundaries.
 
 ## Connection contract
 
-The plugin repository owns the [versioned contract](../contracts/v1/README.md).
+The plugin repository owns the [versioned contract](../contracts/1.0.0/README.md).
 This repository contains checksum-pinned schema/fixtures and an independent TypeScript producer.
 The producer exports only runtime ARN, launch command, and an optional endpoint.
 It does not export Herdr recognition hints or provision-profile labels.

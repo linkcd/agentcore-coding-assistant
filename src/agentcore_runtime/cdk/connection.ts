@@ -1,4 +1,4 @@
-/** Runtime-owned JSON producer. Its public data format is pinned under contracts/v1. */
+/** Runtime-owned JSON producer. Its data format is pinned under contracts/<CONTRACT_VERSION>. */
 export const CONTRACT_VERSION = "1.0.0";
 
 export interface ConnectionFields {

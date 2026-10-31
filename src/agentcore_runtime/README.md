@@ -3,8 +3,8 @@
 ## Ownership
 
 This component owns image definitions, startup adapters, TypeScript CDK, storage, and runtime checks.
-The Herdr plugin is maintained in a separate repository.
-The shared boundary is the [pinned JSON connection contract](../../contracts/v1/README.md).
+The connector is maintained in [linkcd/herdr-agentcore](https://github.com/linkcd/herdr-agentcore).
+The shared boundary is the [pinned JSON connection contract](../../contracts/1.0.0/README.md).
 No plugin or shared contract implementation package is required here.
 
 ## Source layout
@@ -108,7 +108,8 @@ CDK ARN tokens resolve during deployment. The consumer derives the region from t
 Local recognition hints, host credential selection, and profile labels belong to the connector.
 
 The producer in `cdk/connection.ts` is implemented locally.
-Its output is checked against the schema and fixtures pinned under `contracts/v1/` at the repository root.
+Its output is checked against the schema and fixtures pinned under `contracts/1.0.0/` at the repository root.
+`CONTRACT_VERSION` selects the exact SemVer directory used by the producer's exporter and tests.
 The runtime does not load a plugin package or import a sibling repository during synthesis or execution.
 
 ## Runtime behavior and limits
@@ -150,6 +151,7 @@ uv run --frozen pytest -q --tb=short
 npm run check --prefix src/agentcore_runtime/cdk
 npm test --prefix src/agentcore_runtime/cdk
 uv run --frozen python scripts/check_repository.py
+uv run --frozen python scripts/repository_privacy.py
 ```
 
 Build an image after changing image behavior:

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:herdr-agentcore:connection:1",
+  "$id": "urn:herdr-agentcore:connection:1.0.0",
   "title": "AgentCore Shell connection descriptor 1.x",
   "type": "object",
   "additionalProperties": false,

@@ -21,4 +21,4 @@
 | P01 | Keep credentials and real deployment bindings out of Git and images. |
 | P02 | Preserve root legal files and upstream attribution. |
 
-See [the design](DESIGN.md), [runtime guide](../src/agentcore_runtime/README.md), and [contract](../contracts/v1/README.md).
+See [the design](DESIGN.md), [runtime guide](../src/agentcore_runtime/README.md), and [contract](../contracts/1.0.0/README.md).

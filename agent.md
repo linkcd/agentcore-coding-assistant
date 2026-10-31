@@ -3,8 +3,9 @@
 ## Scope
 
 This repository owns AgentCore runtime images, deployment, storage, and verification.
-The Herdr connector is maintained separately in `herdr-to-agentcore`.
-Read [README.md](README.md), [runtime documentation](src/agentcore_runtime/README.md), and [the contract](contracts/v1/README.md).
+The source repository is [linkcd/agentcore-coding-assistant](https://github.com/linkcd/agentcore-coding-assistant).
+The connector is maintained in [linkcd/herdr-agentcore](https://github.com/linkcd/herdr-agentcore).
+Read [README.md](README.md), [runtime documentation](src/agentcore_runtime/README.md), and [the contract](contracts/1.0.0/README.md).
 
 ## Boundaries
 
@@ -14,6 +15,7 @@ Read [README.md](README.md), [runtime documentation](src/agentcore_runtime/READM
 4. Export only the versioned connection descriptor: runtime ARN, explicit launch argv, and optional endpoint.
 5. Derive the region from the ARN on the consumer side. Do not export Herdr recognition hints or provision-profile names.
 6. The plugin repository owns the contract specification. Pin the local schema and fixtures by checksum; do not fetch a moving branch during builds.
+   Use full SemVer directories such as `contracts/1.0.0/`. The producer and tests select the active directory through `CONTRACT_VERSION`.
 7. Keep assistant-specific setup, model routing, tool installation, and work-health reporting in the runtime image.
 
 ## Deployment and storage
@@ -36,12 +38,14 @@ Run from the repository root:
 
 ```bash
 uv sync --frozen
-uv run --frozen ruff check src
-uv run --frozen ruff format --check src
+uv run --frozen ruff check src scripts
+uv run --frozen ruff format --check src scripts
 uv run --frozen pytest -q --tb=short
 npm ci --prefix src/agentcore_runtime/cdk
 npm run check --prefix src/agentcore_runtime/cdk
 npm test --prefix src/agentcore_runtime/cdk
+uv run --frozen python scripts/check_repository.py
+uv run --frozen python scripts/repository_privacy.py
 git diff --check
 ```
 

@@ -1,8 +1,9 @@
-# AgentCore coding runtimes
+# AgentCore coding assistant runtimes
 
 Build and deploy interactive coding assistants in Amazon Bedrock AgentCore Runtime.
 This repository owns the images, TypeScript CDK infrastructure, storage settings, and runtime verification.
-The Herdr connector is maintained independently in `herdr-to-agentcore`.
+Source repository: [linkcd/agentcore-coding-assistant](https://github.com/linkcd/agentcore-coding-assistant).
+The connector is maintained independently in [linkcd/herdr-agentcore](https://github.com/linkcd/herdr-agentcore).
 
 The repositories share a versioned JSON data format, not implementation packages.
 
@@ -14,7 +15,7 @@ src/agentcore_runtime/
   cdk/                TypeScript CDK and local descriptor producer
   provision_profiles/ Named deployment settings
   tests/              Offline checks and opt-in live probes
-contracts/v1/         Checksum-pinned descriptor schema and fixtures
+contracts/1.0.0/      Checksum-pinned descriptor schema and fixtures
 docs/                 Runtime architecture and storage documentation
 ```
 
@@ -75,7 +76,8 @@ The region is derived by the consumer. Herdr recognition and local profile names
 
 The local producer is `src/agentcore_runtime/cdk/connection.ts`.
 It has no import from the plugin repository.
-The pinned [contract](contracts/v1/README.md) supplies conformance data and release provenance.
+The pinned [contract](contracts/1.0.0/README.md) supplies conformance data and release provenance.
+The directory name and producer version both identify contract release `1.0.0`.
 
 A connector can import the CDK output or a standalone descriptor.
 For Herdr, configure the local recognition hint separately with `--agent-kind`.
@@ -115,7 +117,7 @@ Image changes also require the relevant ARM64 image build and container checks.
 - [Design](docs/DESIGN.md)
 - [Requirements](docs/REQUIREMENTS.md)
 - [Storage mapping](docs/STORAGE_MAPPING.md)
-- [Pinned connection contract](contracts/v1/README.md)
+- [Pinned connection contract](contracts/1.0.0/README.md)
 - [Contributor instructions](agent.md)
 
 Keep [LICENSE](LICENSE) and [NOTICE](NOTICE) at the repository root and include them in image builds.

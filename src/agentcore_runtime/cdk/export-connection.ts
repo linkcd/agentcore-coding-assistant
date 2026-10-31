@@ -3,9 +3,9 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { parseArgs } from "node:util";
 import Ajv2020 from "ajv/dist/2020";
-import { connectionDescriptor } from "./connection";
+import { CONTRACT_VERSION, connectionDescriptor } from "./connection";
 
-const schema = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../../../contracts/v1/connection.schema.json"), "utf8"));
+const schema = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../../../contracts", CONTRACT_VERSION, "connection.schema.json"), "utf8"));
 const validate = new Ajv2020({ strict: false }).compile<ReturnType<typeof connectionDescriptor>>(schema);
 
 export function descriptorFromOutputs(outputs: unknown, stack?: string) {
