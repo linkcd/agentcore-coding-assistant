@@ -1,11 +1,10 @@
-/** Pure deployment-side connection data. No AWS or filesystem dependencies. */
+/** Runtime-owned JSON producer. Its public data format is pinned under contracts/v1. */
+export const CONTRACT_VERSION = "1.0.0";
+
 export interface ConnectionFields {
   runtime_arn: string;
-  region: string;
-  endpoint: string;
   command: readonly string[];
-  agent_kind: string | null;
-  runtime_profile: string;
+  endpoint?: string;
 }
 
 export function validateCommand(value: unknown): string[] {
@@ -25,11 +24,17 @@ export function validateCommand(value: unknown): string[] {
 }
 
 export function connectionDescriptor(connection: ConnectionFields) {
-  // CDK ARN/region tokens resolve during deployment. The consumer validates the
-  // resolved ARN and region before it registers the connection.
-  return {
-    version: 1,
-    transport: "agentcore-shell-v1",
-    connection: { ...connection, command: validateCommand(connection.command) },
+  // ARN tokens resolve during deployment. The consumer derives the region.
+  const fields: ConnectionFields = {
+    runtime_arn: connection.runtime_arn,
+    command: validateCommand(connection.command),
   };
+  if (connection.endpoint !== undefined && connection.endpoint !== "DEFAULT") {
+    if (typeof connection.endpoint !== "string" || !connection.endpoint ||
+        Array.from(connection.endpoint).length > 4096 || /[\u0000-\u001f\u007f-\u009f]/.test(connection.endpoint)) {
+      throw new Error("Invalid connection endpoint");
+    }
+    fields.endpoint = connection.endpoint;
+  }
+  return { version: CONTRACT_VERSION, transport: "agentcore-shell-v1", connection: fields };
 }

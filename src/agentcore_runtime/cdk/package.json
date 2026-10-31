@@ -7,7 +7,8 @@
   "engines": { "node": ">=22" },
   "scripts": {
     "check": "tsc --noEmit",
-    "test": "node --import tsx --test tests/cdk.test.ts",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "export-connection": "tsx export-connection.ts",
     "cdk": "cdk"
   },
   "dependencies": {
@@ -15,6 +16,7 @@
     "constructs": "10.8.1"
   },
   "devDependencies": {
+    "ajv": "8.20.0",
     "@types/node": "24.10.0",
     "aws-cdk": "2.1145.0",
     "tsx": "4.23.15",

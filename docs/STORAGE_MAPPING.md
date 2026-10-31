@@ -1,6 +1,6 @@
 # Profile storage mapping
 
-## Decision and status
+## Access-point ownership
 
 Use one dedicated S3 Files access point for each S3-backed provision profile.
 Do not share an access point between different profiles.
@@ -8,11 +8,6 @@ Sessions of the same profile share its access point and persistent files.
 
 This mapping is implemented in the CDK definitions and runtime launcher.
 Externally supplied access-point ARNs are rejected, so separate profiles cannot select the same access point through the provision-profile schema.
-See the runtime README for dated deployment and verification results.
-
-The OpenCode S3 profile was migrated to this layout on 2026-10-20.
-Two replacement user sessions confirmed `/mnt/workspace` as their working directory, with no nested profile directory.
-The old duplicated prefix contained only three empty directory markers. Those approved markers were removed; unrelated S3 data was preserved.
 
 ## Mapping
 
@@ -115,13 +110,12 @@ The provision profile selects its storage stack; CDK creates the dedicated acces
 UID/GID `1000:1000` and directory mode `755` remain fixed CDK values.
 The repository's `provision_profiles/` directory stores deployment definitions. It is separate from the S3 directory layout.
 
-## Migration checks
+## Verification
 
-1. Inspect the old and destination S3 prefixes before changing the access point.
-2. Preserve existing files. Delete only explicitly approved objects or empty directory markers.
-3. Coordinate replacement of affected runtime sessions. An existing session does not switch mounts automatically.
-4. Verify the new access-point root and its runtime role policy.
-5. Verify `/mnt/workspace` startup and native configuration discovery in a fresh session.
-6. Verify shared persistence between sessions of the same profile and separate roots for different profiles.
+1. Confirm that each profile's access-point root and role policy match its configuration.
+2. Verify `/mnt/workspace` startup and native configuration discovery in a disposable session.
+3. Verify shared file persistence between sessions of the same profile.
+4. Verify that different profiles use separate access-point roots and mount permissions.
+5. Remove only files created by the verification procedure.
 
-See [the runtime setup guide](../src/agentcore_runtime/README.md) and [the architecture design](DESIGN.md#persistent-coding-files-through-s3-files).
+See [the runtime setup guide](../src/agentcore_runtime/README.md) and [the architecture design](DESIGN.md#persistent-storage).

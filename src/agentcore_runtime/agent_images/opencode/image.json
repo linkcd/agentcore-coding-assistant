@@ -22,6 +22,5 @@
     "AWSCLI_VERSION": "2.38.2",
     "AWSCLI_SHA256": "ff75a24de7f5a6908dbe2f9ff88253f31e1d67b05595bb460516396daed5d1ff"
   },
-  "command": ["/app/run.sh"],
-  "agentKind": "opencode"
+  "command": ["/app/run.sh"]
 }

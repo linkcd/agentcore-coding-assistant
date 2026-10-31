@@ -37,7 +37,7 @@ function template(name = OPENCODE, profile: RuntimeProfile = profileFor(name)) {
   return Template.fromStack(stack);
 }
 
-test("the repository has exactly the three requested sample profiles", () => {
+test("the repository contains the declared sample profiles", () => {
   const names = fs.readdirSync(path.resolve(__dirname, "../../provision_profiles"))
     .filter((name) => name.endsWith(".json")).map((name) => name.slice(0, -5));
   assert.deepEqual(new Set(names), new Set(PROFILE_NAMES));
@@ -58,7 +58,6 @@ test("the repository has exactly the three requested sample profiles", () => {
     assert.equal(profile.inference["bedrock-endpoint-type"], undefined);
     assert.equal(profile.inference.region, undefined);
     assert.equal(profile.command, undefined);
-    assert.equal(profile.agentKind, undefined);
     assert.equal(profile.environment, undefined);
     assert.equal(profile.tags, undefined);
   }
@@ -109,15 +108,15 @@ test("sample deployments have no custom tags or serialized OpenCode configuratio
   }
 });
 
-test("image definitions declare explicit commands and hints with validated overrides", () => {
+test("image definitions declare explicit commands without consumer-specific hints", () => {
   assert.deepEqual(loadImage("opencode").command, ["/app/run.sh"]);
-  assert.equal(loadImage("codex").agentKind, "codex");
+  assert.ok(!("agentKind" in loadImage("codex")));
   assert.throws(() => loadImage("../outside"), /image reference/);
   const command = ["/opt/assistant/start", "--project", "a b"];
-  const profile = { ...profileFor(OPENCODE), command, agentKind: null };
+  const profile = { ...profileFor(OPENCODE), command };
   const output = JSON.stringify(template(OPENCODE, profile).toJSON().Outputs.ConnectionDescriptor);
   assert.ok(output.includes("/opt/assistant/start") && output.includes("agentcore-shell-v1"));
-  assert.ok(output.includes('"agent_kind":null') || output.includes('\\"agent_kind\\":null'));
+  assert.ok(!output.includes("agent_kind") && !output.includes("runtime_profile") && !output.includes('\\"region\\"'));
   for (const command of [[], null, ["bad\ncommand"]]) {
     assert.throws(() => parseProfile({ ...profile, command }), /command/);
   }
@@ -191,7 +190,7 @@ test("startup endpoint selection changes client configuration without narrowing 
   }
 });
 
-test("the optional endpoint override accepts exact values and rejects invalid values and earlier names", () => {
+test("the optional endpoint override accepts exact values and rejects unsupported properties", () => {
   const base = profileFor(CODEX);
   assert.deepEqual(parseProfile(base).inference, { modelId: "global.openai.gpt-5.6-sol" });
   for (const value of [null, "", "Bedrock Runtime", "Bedrock Mantle", "bedrock", "Runtime", "runtime ", [], {}]) {
@@ -235,7 +234,7 @@ test("both OpenCode profiles share one image and exclude deployment data from as
     for (const excluded of ["node_modules", "provision_profiles", "cdk", ".env", ".sample.env"]) {
       assert.ok(!fs.existsSync(path.join(staged, "src", "agentcore_runtime", excluded)));
     }
-    for (const excluded of [".git", ".venv", "README.md", "src/herdr_plugin", "src/runtime_contract"]) {
+    for (const excluded of [".git", ".venv", "README.md", "contracts", "scripts", "docs"]) {
       assert.ok(!fs.existsSync(path.join(staged, excluded)));
     }
     if (profile.image === "opencode") imageSources.push(path.basename(staged));
@@ -310,6 +309,7 @@ test("optional deployment overrides each affect generated resources", () => {
 test("duplicate, unused, and invalid profile fields are rejected", () => {
   const base = profileFor(STORAGE);
   for (const changes of [
+    { agentKind: "opencode" },
     { account: "123456789012" }, { networkMode: "PUBLIC" }, { image: { directory: "agent_images" } },
     { inference: { ...base.inference, retainedModelIds: [] } },
     { inference: { ...base.inference, project: "default" } },
@@ -324,7 +324,7 @@ test("duplicate, unused, and invalid profile fields are rejected", () => {
     { s3Files: { ...base.s3Files, storageStackName: undefined } },
     { s3Files: { ...base.s3Files, storageStackName: "invalid name" } },
     { s3Files: { ...base.s3Files, storageStackName: base.stackName } },
-    { s3Files: { ...base.s3Files, accessPointArn: "legacy-input" } },
+    { s3Files: { ...base.s3Files, accessPointArn: "external-access-point" } },
     { vpc: { subnetIds: TEST_INFRA.subnetIds, securityGroupIds: TEST_INFRA.securityGroupIds } },
     { vpc: { subnetIds: [], securityGroupIds: null } },
     { region: ["eu-west-1"] }, { workingDirectory: "relative" }, { tags: { InvalidValue: 1 } },

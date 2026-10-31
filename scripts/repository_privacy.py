@@ -1,7 +1,7 @@
 """Offline guard for private deployment data in worktree, index, and Git history.
 
 Only paths, line numbers, and rule names are printed; matched values are redacted.
-Run from a Git checkout: uv run python src/herdr_plugin/tests/repository_privacy.py
+Run from a Git checkout: uv run python scripts/repository_privacy.py
 """
 
 from __future__ import annotations

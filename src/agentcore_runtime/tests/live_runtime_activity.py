@@ -11,12 +11,12 @@ import uuid
 from pathlib import Path
 
 import boto3
-from agentcore_contract import ConnectionSpec, UserError
 from botocore.config import Config
+from runtime_connection import UserError, runtime_target
 
 
 def run(runtime_arn: str, aws_profile: str | None, model_turn: bool):
-    profile = ConnectionSpec.from_dict({"runtime_arn": runtime_arn, "command": ["/app/run.sh"]})
+    profile = runtime_target(runtime_arn)
     record = {"runtime_session_id": str(uuid.uuid4())}
     script = Path(__file__).with_name("runtime_activity_smoke.py").read_text()
     command = ["/usr/local/bin/python3", "-c", script, "--existing-health-server"]

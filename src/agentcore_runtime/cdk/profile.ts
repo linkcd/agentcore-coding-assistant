@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { parseEnv } from "node:util";
-import { validateCommand } from "../../runtime_contract/connection";
+import { validateCommand } from "./connection";
 
 export interface RuntimeProfile {
   stackName: string;
@@ -12,7 +12,6 @@ export interface RuntimeProfile {
   vpc?: { subnetIds: string[]; securityGroupIds: string[] };
   image: string;
   command?: string[];
-  agentKind?: string | null;
   inference: { modelId: string; region?: string; "bedrock-endpoint-type"?: "runtime" | "mantle" };
   s3Files?: {
     storageStackName: string;
@@ -55,7 +54,7 @@ export function loadProfile(name: string, environment: Environment = {}): Runtim
 export function parseProfile(input: unknown, environment: Environment = {}): RuntimeProfile {
   const data = resolveValues(input, environment);
   const fields = new Set(["stackName", "runtimeName", "region", "vpc", "image",
-    "command", "agentKind", "inference", "s3Files", "environment", "workingDirectory", "lifecycle", "tags"]);
+    "command", "inference", "s3Files", "environment", "workingDirectory", "lifecycle", "tags"]);
   if (!data || typeof data !== "object" || Array.isArray(data) ||
       Object.keys(data).some((key) => !fields.has(key))) {
     throw new Error("Unknown or invalid provision profile fields");
@@ -79,9 +78,7 @@ export function parseProfile(input: unknown, environment: Environment = {}): Run
       typeof data.image !== "string" || !/^[a-z][a-z0-9_-]{0,63}$/.test(data.image) ||
       typeof data.inference?.modelId !== "string" ||
       Object.keys(data.inference).some((key) => !["bedrock-endpoint-type", "modelId", "region"].includes(key)) ||
-      !/^[A-Za-z0-9][A-Za-z0-9.:-]{0,199}$/.test(data.inference.modelId) || data.inference.modelId.startsWith("arn:") ||
-      (data.agentKind !== undefined && data.agentKind !== null &&
-        (typeof data.agentKind !== "string" || !/^[a-z][a-z0-9_-]{0,63}$/.test(data.agentKind)))) {
+      !/^[A-Za-z0-9][A-Za-z0-9.:-]{0,199}$/.test(data.inference.modelId) || data.inference.modelId.startsWith("arn:")) {
     throw new Error("Invalid runtime profile settings");
   }
   if (data.inference["bedrock-endpoint-type"] !== undefined &&

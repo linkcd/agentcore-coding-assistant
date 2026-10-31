@@ -1,4 +1,4 @@
-name: Component checks
+name: Runtime checks
 on:
   push:
   pull_request:
@@ -25,16 +25,12 @@ jobs:
           node-version: "22"
       - run: uv sync --frozen
       - run: npm ci --prefix src/agentcore_runtime/cdk
+      - run: uv run --frozen ruff check src scripts
+      - run: uv run --frozen ruff format --check src scripts
+      - run: uv run --frozen pytest -q --tb=short
       - run: npm run check --prefix src/agentcore_runtime/cdk
       - run: npm test --prefix src/agentcore_runtime/cdk
-      - run: uv run ruff check src
-      - run: uv run ruff format --check src
-      - run: uv run pytest
-      - run: uv run python src/herdr_plugin/tests/repository_privacy.py
-      - run: uv build --all-packages
-      - run: uv run python src/runtime_contract/tests/check_distributions.py --dist dist
-      - name: Check production installation
-        run: |
-          uv sync --frozen --no-dev
-          .venv/bin/python -m herdr_agentcore --help
-          .venv/bin/python -c "import importlib.util; assert importlib.util.find_spec('agentcore_runtime') is None"
+      - run: uv run --frozen python scripts/check_repository.py
+      - run: uv run --frozen python scripts/repository_privacy.py
+      - name: Verify runtime SDK installation
+        run: .venv/bin/python -c "import boto3; from bedrock_agentcore.runtime import AgentCoreRuntimeClient"

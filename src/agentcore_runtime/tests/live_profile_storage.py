@@ -7,12 +7,12 @@ import uuid
 from pathlib import PurePosixPath
 
 import boto3
-from agentcore_contract import ConnectionSpec, UserError
 from botocore.config import Config
+from runtime_connection import UserError, runtime_target
 
 
 def run(runtime_arn: str, mount_path: str) -> None:
-    spec = ConnectionSpec.from_dict({"runtime_arn": runtime_arn, "command": ["/app/run.sh"]})
+    spec = runtime_target(runtime_arn)
     client = boto3.Session(region_name=spec.region).client(
         "bedrock-agentcore", config=Config(read_timeout=240)
     )

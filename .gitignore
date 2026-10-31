@@ -1,47 +1,22 @@
-# Research checkouts: dependencies are installed from the lockfile, not these trees.
-/herdr/
-/agentcore-samples/
-/agentcore-sdk-python/
-
-# Generated Python environment and packaging output.
 .venv/
-build/
-dist/
-*.egg-info/
-
-# Generated test/lint caches and Python bytecode (at any directory depth).
 __pycache__/
 *.py[cod]
 .pytest_cache/
 .ruff_cache/
 .coverage
-.DS_Store
-
-# Local deployment values, credentials, and generated state must not be tracked.
-.env
-.env.*
-!/src/agentcore_runtime/.sample.env
-runtime_config*.json
-*.connection.json
-*.connection.json.lock
+htmlcov/
 node_modules/
 cdk.out/
 cdk.context.json
-cdk-outputs*.json
-agent.config
-infra.config
-.deployed-state.json
-.aws/
-credentials
-credentials.json
+dist/
+build/
+*.egg-info/
+.env
+.env.*
+!.sample.env
 *.pem
 *.key
-*.p12
-*.pfx
-*.local.json
-*.log
-/config.json
-/connections/
-/state/
-/test-artifacts/
+credentials.json
 .local/
+.mcp.json
+.DS_Store

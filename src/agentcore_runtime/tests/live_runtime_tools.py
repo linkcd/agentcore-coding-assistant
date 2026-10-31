@@ -7,12 +7,12 @@ import uuid
 from pathlib import Path
 
 import boto3
-from agentcore_contract import ConnectionSpec, UserError
 from botocore.config import Config
+from runtime_connection import UserError, runtime_target
 
 
 def run(runtime_arn, native, persistent_root=None):
-    spec = ConnectionSpec.from_dict({"runtime_arn": runtime_arn, "command": ["/app/run.sh"]})
+    spec = runtime_target(runtime_arn)
     tests = Path(__file__).parent
     common = tests.parent / "agent_images/common"
     source_hashes = {

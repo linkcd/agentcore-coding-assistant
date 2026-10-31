@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:herdr-agentcore:connection:1",
+  "title": "AgentCore Shell connection descriptor 1.x",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "transport", "connection"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "default": "1.0.0",
+      "pattern": "^1\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?![\\s\\S])"
+    },
+    "transport": {"const": "agentcore-shell-v1"},
+    "connection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["runtime_arn", "command"],
+      "properties": {
+        "runtime_arn": {
+          "type": "string",
+          "pattern": "^arn:(aws|aws-cn|aws-us-gov):bedrock-agentcore:[a-z0-9-]+:[0-9]{12}:runtime/[a-zA-Z0-9_-]+(?![\\s\\S])"
+        },
+        "command": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "prefixItems": [{"allOf": [{"$ref": "#/$defs/text"}, {"pattern": "^[^-]"}]}],
+          "items": {"$ref": "#/$defs/text"},
+          "description": "Explicit argv. Additionally, sum(UTF-8 bytes per argument + 1) must not exceed 8192."
+        },
+        "endpoint": {"$ref": "#/$defs/text", "default": "DEFAULT"}
+      }
+    }
+  },
+  "$defs": {
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+(?![\\s\\S])"
+    }
+  }
+}

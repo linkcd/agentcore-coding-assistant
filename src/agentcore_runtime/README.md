@@ -1,1367 +1,184 @@
-# AgentCore runtime infrastructure
+# AgentCore runtime implementation
 
-## Purpose
+## Ownership
 
-Define and deploy AgentCore infrastructure with the official AWS Cloud Development Kit (CDK).
-This folder is a CDK project, not a Python package or an assistant launcher executable.
-Use standard `cdk synth`, `cdk diff`, `cdk deploy`, and `cdk destroy` commands.
-CDK builds and publishes Docker assets and manages CloudFormation resources.
+This component owns image definitions, startup adapters, TypeScript CDK, storage, and runtime checks.
+The Herdr plugin is maintained in a separate repository.
+The shared boundary is the [pinned JSON connection contract](../../contracts/v1/README.md).
+No plugin or shared contract implementation package is required here.
 
-## Agent images and provision profiles
+## Source layout
 
-`-c runtimeProfile=NAME` selects `provision_profiles/NAME.json`.
-The existing CDK context key remains `runtimeProfile`. The directory and documentation use **provision profile**.
-The name is a pointer to settings, not an assistant enum in the connector.
-The three samples are `codex-agentcore-profile-1`, `opencode-agentcore-profile-2`, and `opencode-s3filesystem-agentcore-profile-3`.
-Several profiles can use the same assistant with different commands, models, or settings.
-
-| Term | Meaning |
+| Directory or file | Purpose |
 | --- | --- |
-| Agent image | Container sources plus one `image.json` definition under `agent_images/NAME/`. |
-| Provision profile | Named deployment input that references an image, model, lifecycle, and optional network/storage. |
-| Herdr connection profile | Host-local label that stores the deployed ARN and resolved connection fields. |
-| `agent_kind` | Herdr recognition hint declared by the image, with an optional profile override. It does not select infrastructure. |
-| AWS profile | Host credential selection through CDK's `--profile` or the connector's `--aws-profile`. |
+| `agent_images/common/` | Shared Dockerfile, tools, mount checks, startup support, and health endpoint. |
+| `agent_images/opencode/` | OpenCode image settings, model routing, and work-activity hooks. |
+| `agent_images/codex/` | Codex image settings, provider configuration, and sandbox preset. |
+| `provision_profiles/` | Named runtime settings. |
+| `cdk/` | Deployment and storage stacks, input validation, and descriptor producer. |
+| `tests/` | Offline tests, image checks, and explicitly selected live probes. |
+| `.sample.env` | Template for external bucket/network bindings. |
 
-Each sample profile declares only its deployment choices. Build and startup defaults belong to the image definition.
-Deployment inputs are self-contained in this component: tracked provision profiles plus `src/agentcore_runtime/.env`.
-The env file is ignored by Git. The adjacent tracked [.sample.env](.sample.env) lists the local bindings to fill.
-CDK does not read a repository-root `.env` or external profile directories.
-The entrypoint resolves the profile and image definition once, then passes the settings into the stack.
-Only `-c runtimeProfile=NAME` selects project configuration. Per-field CDK context overrides are rejected.
-Actual runtime ARNs are deployment outputs. Provision profiles are inputs, not records of already-created runtimes.
-The contract receives resolved command data plus a `runtime_profile` reference. The connector never imports CDK code or resolves a name into an assumed command.
+The deployed command is `/app/run.sh`, which executes the selected adapter's `run.py`.
+The shared launcher validates required mounts, configures local caches, and changes to the selected working directory.
+The adapter chooses its own CLI and model configuration.
 
-```text
-src/agentcore_runtime/
-  README.md              This guide and the three sample profiles
-  .env                   Local filesystem bindings; ignored by Git
-  .sample.env            Tracked env template; no real resource values
-  cdk/                   CDK source, npm metadata, configuration, and tests
-    app.ts
-    profile.ts
-    image.ts
-    runtime-stack.ts
-    infrastructure-stack.ts   S3 Files resources using external networking
-    infrastructure-config.ts  Validated infrastructure values from .env
-    tests/cdk.test.ts
-    cdk.json
-    package.json
-    package-lock.json
-    tsconfig.json
-  provision_profiles/    Deployment inputs
-    codex-agentcore-profile-1.json
-    opencode-agentcore-profile-2.json
-    opencode-s3filesystem-agentcore-profile-3.json
-  agent_images/
-    common/              Shared Dockerfile, run.sh, startup helpers, and health
-    opencode/            image.json, run.py, model catalog, and work-event plugin
-    codex/               image.json, run.py, sandbox configuration, and build hook
-  tests/                 Python and JavaScript runtime checks and live probes
+## Profile settings
+
+The samples are `codex-agentcore-profile-1`, `opencode-agentcore-profile-2`, and `opencode-s3filesystem-agentcore-profile-3`.
+They are deployment settings references, not an assistant enum in a connector.
+The entrypoint accepts only `-c runtimeProfile=NAME` for selecting project configuration.
+
+| Field | Purpose |
+| --- | --- |
+| `stackName`, `runtimeName`, `region` | Deployment names and AWS region. The CDK Toolkit supplies the authenticated account. |
+| `image` | Select a directory under `agent_images/`. |
+| `command` | Optional explicit override of the image's launch argv. |
+| `inference.modelId` | Startup model identifier. |
+| `inference.region` | Optional inference-region override. Defaults to deployment region. |
+| `inference.bedrock-endpoint-type` | Optional exact value `runtime` or `mantle`. Native model routing is used when omitted. |
+| `lifecycle` | Idle timeout and maximum compute lifetime in seconds. |
+| `s3Files` | Storage stack name, mount path, and read-only choice. |
+| `vpc` | Optional external VPC bindings for profiles without managed S3 Files storage. |
+| `workingDirectory` | Optional absolute path. For S3 profiles, it must remain inside the dedicated mount. |
+| `environment` | Additional string settings; derived settings cannot be overridden here. |
+| `tags` | Optional explicit tags. No application tags are added automatically. |
+
+Each image definition declares its Dockerfile, build arguments, and command.
+It does not declare a Herdr recognition kind.
+Model configuration, tool installation, and health reporting are runtime responsibilities.
+
+## External storage bindings
+
+Fill `.env` beside this README using `.sample.env` as the template:
+
+```dotenv
+S3_BUCKET_NAME=example-agent-workspaces
+VPC_SUBNET_IDS=<first-subnet-id>,<second-subnet-id>
+VPC_SECURITY_GROUP_IDS=<security-group-id>
 ```
 
-## Required AWS libraries and tools
+Replace the placeholders with existing resources for a real deployment.
+The component `.env` is the only source for these deployment bindings.
+Do not add an access-point ARN, root prefix, POSIX settings, or storage stack name to `.env`.
+The profile selects the storage stack. CDK creates the access point.
 
-| Dependency | Purpose |
-| --- | --- |
-| `aws-cdk-lib` 2.273.0 | Official `aws_bedrockagentcore.CfnRuntime`, IAM, outputs, and Docker assets. |
-| `constructs` 10.8.1 | CDK construct base library. |
-| `aws-cdk` CLI 2.1145.0 | Standard synthesis, difference review, deployment, and destruction. |
-| Node.js 22+ and npm | Run the CDK application and install locked dependencies. |
-| TypeScript and `tsx` | Type-check and run the CDK application. |
-| Docker with ARM64 support | Build the selected assistant image. |
-| AWS credentials | Authorize CDK deployment and role assumption. |
-| AWS CLI v2, recommended | Check identity and refresh SSO credentials. |
-| CDK bootstrap resources | Store/publish assets and supply deployment roles in the target account/region. |
+The storage stack uses the bucket root and external networking.
+Each S3-backed profile owns one access point rooted at `/agent-filesystem/profiles/<profile-name>`.
+The runtime mounts and starts directly at `/mnt/workspace` in the sample.
+UID/GID are 1000:1000 and directory mode is 755.
+No second profile directory is created under the mount.
 
-The npm lockfile pins dependencies. CLI and construct-library version numbers are independent.
-No custom Boto3 create/update deployment loop is used.
+Worker roles are scoped to their generated access point and have no direct S3 bucket grants.
+Networking, subnets, security groups, and the backing bucket remain externally owned.
+The operator-owned network deployment source and settings are ignored under `.local/deployments/`.
+See [storage mapping](../../docs/STORAGE_MAPPING.md).
 
-## Shared image structure
+## Build and deploy
 
-All supplied profiles use the repository root as the Docker build context so builds can include the root `LICENSE` and `NOTICE`.
-The Dockerfile is `src/agentcore_runtime/agent_images/common/Dockerfile` relative to that context.
-The Dockerfile is a shared build template. Each build installs one assistant and produces a separate image.
-The profile's `image` reference selects `agent_images/NAME/image.json`.
-That definition declares the Dockerfile relative to `agent_images/`, package/version build arguments, executable, launch command, and Herdr hint.
-CDK derives `ASSISTANT_DIR` from the image reference. The definition must not repeat it.
-CDK stages the root legal files and `.dockerignore`, plus `common/` and the selected adapter directory under their source paths.
-Other components, deployment bindings, caches, and the unselected adapter are excluded. Changes to another adapter do not change this image asset.
-
-The shared image installs the common coding tools and checks the installed assistant version.
-It copies the root legal files and shared helpers to `/app`, then adds the selected image's `run.py`.
-The shared `/app/run.sh` executes `/app/run.py`. That Python entrypoint starts OpenCode or Codex with the shared helpers.
-The health server remains the container's default process.
-
-```text
-/app/run.sh → /app/run.py → opencode or codex
-```
-
-| File | Purpose |
-| --- | --- |
-| [common/run.sh](agent_images/common/run.sh) | Stable command used by the connector. It forwards arguments to `run.py`. |
-| [opencode/run.py](agent_images/opencode/run.py) | OpenCode startup settings and executable entrypoint. Copied to `/app/run.py` in that image. |
-| [codex/run.py](agent_images/codex/run.py) | Codex startup settings and executable entrypoint. Copied to `/app/run.py` in that image. |
-| [common/runtime.py](agent_images/common/runtime.py) | Imported helpers for environment inheritance, mount checks, working directory, and process execution. |
-
-Both adapter directories contain `run.py`, Python module metadata, and `image.json`.
-Maintain [LICENSE](../../LICENSE) and [NOTICE](../../NOTICE) only at the repository root. Docker copies them into `/app` during the build.
-The three profiles use two images: one Codex image and one shared OpenCode image. Profile directories contain no legal-file copies.
-Each `run.py` supplies the non-secret environment allowlist, required settings, and native arguments.
-The shared helper uses `AGENTCORE_WORKDIR` when supplied, otherwise the image's home directory.
-It reads PID 1 settings, preserves explicit values, handles startup errors, and replaces the launcher process.
-Neither launcher writes credentials or overwrites user configuration.
-
-Optional files reflect real assistant requirements. OpenCode needs `opencode.json`, an event plugin, and a build-time plugin-dependency warmup.
-Codex uses native CLI configuration arguments and a native permission preset.
-Its build hook creates the initial user configuration. Startup does not replace existing user configuration.
-Codex currently has no work-event adapter.
-Do not add empty files to make the file counts equal. Keep this comparison in this README; do not add assistant-specific READMEs.
-
-## OpenCode and Codex comparison
-
-See [coding tools and MCP environments](#coding-tools-and-mcp-environments) for installed tools and storage paths.
-
-The names below refer to the supplied settings. Other named profiles can reuse either adapter.
-
-| Area | OpenCode example | Codex example |
-| --- | --- | --- |
-| Infrastructure | Shared official CDK stack, ARM64 Docker asset, IAM role, and outputs. | Same. |
-| Build and startup | Shared Dockerfile, tools, user, entrypoint, environment inheritance, and error handling. | Same. |
-| Python launcher | `agent_images/opencode/run.py`. | `agent_images/codex/run.py`. |
-| Package/version | `opencode-ai` 1.18.30. | `@openai/codex` 0.163.0. |
-| Inference | The selected model's catalog metadata chooses the native endpoint and SDK. An advanced startup override is optional. | The image defaults to native Bedrock Runtime. An optional override selects Mantle. |
-| Model authentication | Refreshable execution-role provider; no exported snapshot. | Native AWS credential chain; no generated bearer-token snapshot. |
-| Model authorization | Each role allows Runtime invocation on all model resources and Mantle inference on regional account projects. The startup choice is not an IAM allowlist. | Same policy for both endpoints. |
-| Configuration | Additional `opencode.json`; explicit updater suppression. | Native provider arguments and an image-installed permission preset; approval policy is not overridden. |
-| HTTP health and process checks | Shared health server and live/fresh work-lease reader. | Same implementation. |
-| AgentCore work-event source | OpenCode event/tool hooks publish process-bound work leases. | Not implemented. No work lease is produced by this adapter. |
-| Herdr native support | Supported by Herdr 0.9.5. | Supported by Herdr 0.9.5. |
-| Current remote Herdr status | Host wrapper hint plus Herdr's active screen manifest. | Same mechanism, with Codex-specific screen/title rules. |
-| Runtime health while work runs | `HealthyBusy` when a valid work lease exists. | Currently `Healthy` without a work-event reporter, even if Herdr sees working UI. |
-| Validation boundary | See the dated cloud and local checks below. | Model changes need fresh native-client and shell-tool checks; see the dated results below. |
-
-### How Herdr checks state
-
-Herdr 0.9.5 lists both `opencode` and `codex` as supported kinds.
-For remote assistants, the connector sets the profile's `agent_kind` as `HERDR_AGENT` on its host-visible process.
-Herdr uses that hint to select an existing detection manifest. It reads the live terminal detection region and, where supported, the terminal OSC title.
-The connector forwards those terminal bytes; it does not implement a second screen detector or report guessed lifecycle states.
-
-The pinned Herdr 0.9.5 bundled rules use these signals:
-
-| State evidence | OpenCode manifest | Codex manifest |
-| --- | --- | --- |
-| Working | Interrupt hints such as `esc to interrupt`, or recognized progress-bar glyphs. | A spinner in the OSC title, or a live elapsed-time status line with supported interrupt/timer patterns. |
-| Blocked | Known permission prompts or confirm/submit controls in the recent screen region. | `Action Required` in the OSC title; known directory-trust, update-picker, approval, or question UI. |
-| Idle | Known-agent idle fallback when no stronger rule matches. | Non-working title rule, or known-agent idle fallback when no stronger rule matches. |
-
-These rules are versioned evidence, not proof that arbitrary new UI is recognized.
-An unfamiliar approval prompt can fall back to idle. A connected wrapper can also outlive a failed remote assistant.
-Inspect unexpected UI before sending input. A Herdr idle badge is not permission to approve an action or proof that all background work ended.
-
-Herdr can load newer compatible remote manifests or local overrides. Inspect the running server's actual rule source and match:
+Run from the repository root:
 
 ```bash
-herdr agent list
-herdr agent explain <agent-name-or-pane-id> --json
-herdr agent read <agent-name-or-pane-id> --source detection --lines 80
-```
-
-An installed Herdr 0.9.5 check with synthetic Codex screen text matched `screen_working_fallback` to `working` and `live_strong_blocker` to `blocked`.
-The active manifest reported version `2026.10.11.1`. This verifies those detection rules, not a Codex cloud conversation or every possible prompt.
-
-The optional native Herdr OpenCode integration can report lifecycle state and session identity directly when it can reach the local Herdr socket.
-The native Codex integration reports session identity; its lifecycle status still uses screen detection.
-This project does not relay either integration's local socket from AgentCore to the management host.
-Our OpenCode activity plugin reports to AgentCore health, not to Herdr. Installing a host integration does not create that remote relay.
-
-### Herdr state and AgentCore health are separate
-
-Herdr's state controls viewing, waits, and notifications. AgentCore's `/ping` status affects runtime activity accounting.
-The shared health reader accepts only fresh leases from matching live processes. It returns `Healthy` when no valid lease exists.
-This means Codex can be working according to Herdr while AgentCore receives only readiness health.
-Codex needs a real runtime-side work reporter before long work can reliably report `HealthyBusy`; it does not need another Herdr detector.
-Do not replace missing telemetry with a permanent busy flag or an advancing `time_of_last_update`.
-
-## Coding tools and MCP environments
-
-Both images contain the same Linux ARM64 toolchain. Each `image.json` declares the versions and archive checksums.
-The Dockerfile pins the Amazon Linux base digest. OS packages use that release's repositories.
-`common/install_tools.py` verifies archive SHA-256 checksums before installation.
-The pinned uv release verifies Python downloads with its embedded catalog. npm verifies package integrity during installation.
-
-| Tool | Image version | Commands |
-| --- | --- | --- |
-| Python | 3.15.0 | `python`, `python3`, `python3.15`, `pip`, `pip3` |
-| Python compatibility interpreter | 3.13.16 | `python3.13` |
-| Node.js LTS | 24.22.0 | `node`, `nodejs`, bundled `npm` and `npx` |
-| uv | 0.13.3 | `uv`, `uvx` |
-| pnpm | 12.14.0 | `pnpm` |
-| Go | 1.27.3 | `go`, `gofmt` |
-| Rust | 1.99.1 | `rustc`, `cargo`, `rustfmt`, `cargo-clippy` |
-| GitHub CLI | 2.102.0 | `gh` |
-| AWS CLI | 2.38.2 | `aws` |
-| ripgrep | 15.2.0 | `rg` |
-
-The images also include GCC, G++, Make, CMake, Ninja, and `pkg-config`.
-Development libraries include OpenSSL, libffi, zlib, bzip2, xz, SQLite, and readline.
-Repository and shell tools include Git, SSH clients, curl, wget, jq, file, tree, SQLite, patch, diff, rsync, less, nano, iproute, DNS tools, and archive tools.
-
-The shared launcher repairs missing standard `PATH` entries. Custom paths retain precedence.
-Image commands use `/usr/local/bin`. Python headers and Node headers support native extension builds.
-Rust libraries use the system linker cache. `GOROOT` points to `/usr/local/go`.
-The `uvx` command forwards to `uv tool run`; this avoids the native stub's `/proc/self/exe` requirement in Codex's sandbox.
-Go telemetry is disabled in the initial image configuration.
-`agentcore-mcp` and its helper modules live under `/usr/local`, which the Codex sandbox can read.
-
-### Local state and persistent files
-
-`HOME` remains `/home/agent`. The launcher creates local tool directories as UID 1000.
-No shell activation or root package installation is required for normal project work.
-The system Python remains available to Amazon Linux. Use virtual environments for Python packages.
-
-| Data | Default location or setting |
-| --- | --- |
-| uv, pip, npm, pnpm, and Go caches | `/tmp/agentcore/cache/` |
-| Temporary files | `/tmp/agentcore/tmp/` through `TMPDIR` |
-| Runtime sockets | `/tmp/agentcore/run/` through `XDG_RUNTIME_DIR` |
-| uv tool environments and downloaded interpreters | `/tmp/agentcore/tools/` |
-| Cargo home and Go workspace | `/tmp/agentcore/tools/` |
-| Python project environments | `/tmp/agentcore/environments/projects/<launch-directory-hash>` |
-| Rust build output | `/tmp/agentcore/build/<launch-directory-hash>/rust` |
-| User-installed command entrypoints | `~/.local/bin`, the configured Cargo bin directory, and `PNPM_HOME` |
-| npm global prefix | `~/.local` |
-| Coding files, configuration, skills, and tool lockfiles | Explicit project paths on the configured persistent mount |
-
-`UV_LINK_MODE=copy` avoids cross-filesystem hard links. Explicit non-empty tool settings are preserved.
-`AGENTCORE_TOOL_ROOT` selects the root for generated environment/build paths. Keep it off S3 Files.
-Explicit tool-specific variables still take precedence.
-`PNPM_CONFIG_STORE_DIR` selects the pnpm store. pnpm 12 ignores the older npm-style store environment setting.
-The explicit environment setting also works when the Codex sandbox hides home configuration outside its workspace.
-`UV_PROJECT_ENVIRONMENT` and `CARGO_TARGET_DIR` are scoped to the launch directory.
-If one agent switches to another independent project, give that project separate settings.
-`node_modules` remains project-local; changing the npm cache does not move it.
-Git ignore rules do not remove files from persistent storage.
-
-The MCP installation probe found `EMLINK` errors when uv used S3 Files for temporary/cache operations.
-It also found a persistent virtual environment with an interpreter symlink into an ephemeral cache.
-Retain dependency definitions and lockfiles. Rebuild installed environments on local runtime storage.
-The image does not migrate or delete existing files on the mount.
-Per-binding namespaces and conversation checkpoints remain separate work.
-
-### Register any Python MCP server
-
-For a standard server, register its upstream `uvx` command directly in OpenCode:
-
-```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "mcp": {
-    "my-server": {
-      "type": "local",
-      "command": ["uvx", "--from", "PACKAGE@VERSION", "SERVER_COMMAND"],
-      "enabled": true,
-      "timeout": 120000
-    }
-  }
-```
-
-Replace `PACKAGE`, `VERSION`, and `SERVER_COMMAND` with the upstream distribution, version, and executable.
-Use `--from` when the package name and executable name differ. A server-specific launcher is not required by MCP.
-OpenCode uses `mcp` and a command array, not the `mcpServers` configuration shape used by some other clients.
-Verify a real tool call as well as server discovery; a connected server can still fail when it contacts an upstream API.
-
-For persistent lockfiles, the image also provides the optional `agentcore-mcp` bootstrap below.
-It does not register a particular MCP server or grant blanket tool approval.
-Use a small dependency-only project at an explicit persistent path, for example `tools/my-server/`.
-
-1. Create `pyproject.toml` in that directory:
-
-   ```toml
-   [project]
-   name = "workspace-mcp"
-   version = "0.1.0"
-   requires-python = ">=3.13,<3.14"
-   dependencies = []
-
-   [tool.uv]
-   package = false
-   ```
-
-2. Set `TOOL_PROJECT` to its absolute path. Add the chosen package at an explicit version:
-
-   ```bash
-   uv add --project "$TOOL_PROJECT" --python python3.13 --no-sync "PACKAGE==VERSION"
-   ```
-
-   Replace `PACKAGE` and `VERSION` with the selected server package and version.
-   Retain both `pyproject.toml` and `uv.lock` on persistent storage.
-
-3. Test the package's documented server command:
-
-   ```bash
-   agentcore-mcp --project "$TOOL_PROJECT" --python python3.13 --setup-timeout 90 -- SERVER_COMMAND
-   ```
-
-   Replace `SERVER_COMMAND` with the installed entrypoint. Arguments after `--` pass through unchanged.
-   Use `--python python3.15` with a compatible manifest when the server supports Python 3.15.
-
-4. Register that command in the assistant's configuration. An OpenCode entry has this shape:
-
-   ```json
-   {
-     "mcp": {
-       "my-server": {
-         "type": "local",
-         "command": ["/usr/local/bin/agentcore-mcp", "--project", "/mnt/workspace/tools/my-server", "--setup-timeout", "90", "--", "SERVER_COMMAND"],
-         "timeout": 120000
-       }
-     }
-   }
-   ```
-
-   Merge the entry into the intended configuration. Preserve other settings and select tool permissions explicitly.
-   Start a fresh assistant process to load changed MCP configuration.
-
-The helper runs `uv sync --locked --no-dev --no-install-project --no-editable`.
-It requires an installed interpreter and does not download Python during setup.
-It keys local environments by the project path, interpreter path, manifest, and lockfile.
-A local lock serializes setup. A completed environment is reused without another dependency sync.
-Changed definitions select a new environment. Setup rejects a stale lockfile or a definition that changes during installation.
-The setup timeout includes the lock wait. Installation output goes to stderr; stdout remains available for MCP messages.
-The server retains the caller's working directory.
-Fresh compute needs access to package sources unless the required packages are already available locally.
-This helper restores tool dependencies, not an assistant conversation or an in-flight operation.
-
-### Build and test the tool images
-
-Run from the repository root. The build helper reads the same `image.json` arguments as CDK:
-
-```bash
-uv run --frozen python src/agentcore_runtime/tests/build_runtime_image.py opencode --tag herdr-agentcore-tools:opencode
-uv run --frozen python src/agentcore_runtime/tests/build_runtime_image.py codex --tag herdr-agentcore-tools:codex
-HERDR_RUNTIME_TEST_IMAGE=herdr-agentcore-tools:opencode CODEX_RUNTIME_TEST_IMAGE=herdr-agentcore-tools:codex \
-  uv run --frozen pytest src/agentcore_runtime/tests -q --tb=short
-```
-
-Image tests exercise native Python/Node extensions, C++, OpenSSL, Go, Rust, and local CLI installation.
-MCP tests build a disposable local wheel and check initialize, discovery, and tool calls with empty caches.
-The test server is not part of either runtime image.
-Local Codex tests allow Docker user-namespace syscalls so Codex can apply its native sandbox. They keep UID 1000 and disable network access.
-Cloud validation uses fresh sessions and removes only its own test files.
-
-## Step 1: prepare tools and authentication
-
-Run the following commands from the repository root:
-
-```bash
+uv sync --frozen
 npm ci --prefix src/agentcore_runtime/cdk
-npm run check --prefix src/agentcore_runtime/cdk
-npm test --prefix src/agentcore_runtime/cdk
-aws sts get-caller-identity
-docker version
-```
-
-If you use a named AWS profile, add `--profile YOUR_AWS_PROFILE` to CDK commands.
-Refresh its SSO login first when needed. Do not store credentials in profile JSON or CDK context.
-
-Create an ignored, repo-local location for deployment outputs:
-
-```bash
-mkdir -p -m 700 .local/deployments
-```
-
-## Step 2: bootstrap the target environment if needed
-
-Check whether the account/region already has a suitable `CDKToolkit` stack.
-If it does not, an authorized administrator must bootstrap it:
-
-```bash
-npm --prefix src/agentcore_runtime/cdk run cdk -- bootstrap aws://ACCOUNT_ID/REGION
-```
-
-Replace `ACCOUNT_ID` and `REGION` with the intended environment.
-Bootstrap is shared account infrastructure. Review its trust and CloudFormation execution policies with the environment owner.
-Do not bootstrap another account or delete a shared bootstrap stack as application cleanup.
-
-## Step 3: select a sample profile
-
-| Profile | Agent and startup model | Network | Working directory |
-| --- | --- | --- | --- |
-| [codex-agentcore-profile-1](provision_profiles/codex-agentcore-profile-1.json) | Codex 0.163.0; `global.openai.gpt-5.6-sol` through Bedrock Runtime | PUBLIC; no VPC or mount | Image home, `/home/agent` |
-| [opencode-agentcore-profile-2](provision_profiles/opencode-agentcore-profile-2.json) | OpenCode 1.18.30; `global.moonshotai.kimi-k3` | PUBLIC; no VPC or mount | Image home, `/home/agent` |
-| [opencode-s3filesystem-agentcore-profile-3](provision_profiles/opencode-s3filesystem-agentcore-profile-3.json) | Same OpenCode image and Kimi K3 model | External VPC and a profile-specific S3 Files access point | `/mnt/workspace` |
-
-The three sample `inference` objects contain only `modelId`. Their models use Runtime through native catalog metadata or the Codex image default.
-All Runtime and default inference regions are `eu-west-1`.
-Both startup models use global cross-Region inference; an Ireland endpoint does not restrict model processing to the EU.
-Each profile creates its own stack, execution role, and Runtime ARN. Sessions are instances of that deployment.
-
-| Profile | CloudFormation stack | AgentCore Runtime name |
-| --- | --- | --- |
-| `codex-agentcore-profile-1` | `HerdrCodexRuntime` | `codex_agentcore_runtime_1` |
-| `opencode-agentcore-profile-2` | `HerdrOpenCodeRuntime` | `opencode_agentcore_runtime_2` |
-| `opencode-s3filesystem-agentcore-profile-3` | `HerdrOpenCodeS3FilesystemRuntime` | `opencode_s3filesystem_runtime_3` |
-
-Profile filenames may contain hyphens. AgentCore Runtime names use letters, digits, and underscores, with a leading letter and at most 48 characters.
-
-### Profile field review
-
-| Field | Purpose and source of truth |
-| --- | --- |
-| `stackName` | Identifies the CloudFormation stack. It is separate from the Runtime resource name. |
-| `runtimeName` | Names the AgentCore resource. It has different naming constraints and replacement behavior. |
-| `region` | Selects the Runtime deployment region. CDK resolves the account from deployment credentials/context. |
-| `image` | References one image definition. Package, version, Dockerfile, command, and hint are not copied into every sample. |
-| `inference.bedrock-endpoint-type` | Optional advanced startup override. Accepts only `"runtime"` or `"mantle"`. Omit it to use native OpenCode catalog routing or Codex's Runtime default. It does not change IAM. |
-| `inference.modelId` | Selects the startup model, not an IAM model allowlist. |
-| `inference.region` | Optional. Defaults to the Runtime region. All three samples omit it. |
-| `lifecycle` | Sets idle timeout and maximum lifetime in seconds. Both values affect the deployed resource. |
-| `vpc` | Optional imported network settings for profiles without managed S3 Files. Do not combine with `s3Files`. |
-| `s3Files` | Uses managed storage and creates one dedicated access point per profile. Network IDs come from `.env`. |
-| `s3Files.storageStackName` | Selects the storage stack. Profiles can share the filesystem, but not an access point. |
-| `s3Files.mountPath` | Mounts the profile's access-point root and supplies the default working directory. |
-| `s3Files.readOnly` | Controls whether the role receives filesystem write permission. |
-
-Advanced overrides are optional and absent from the samples: `command`, `agentKind`, `workingDirectory`, `tags`, and `environment`.
-They respectively override image argv, recognition hint, working directory, extra tags, and non-secret environment settings.
-The parser rejects unknown fields and environment entries that duplicate derived endpoint, model, region, or working-directory settings.
-The samples add no custom tags. Only explicit profile `tags` are applied; there are no automatic `Project`, `AssistantProfile`, or `ProvisionProfile` tags.
-AWS-managed `aws:cloudformation:*` tags still appear on deployed resources.
-
-Removed profile fields include `account`, `networkMode`, `s3Files.bucketName`, `s3Files.prefix`, `inference.project`, and `inference.retainedModelIds`.
-CDK resolves the account from the authenticated Toolkit context. Managed S3 Files or explicit `vpc` settings select VPC networking.
-The backing bucket belongs to infrastructure `.env` settings. The filesystem uses its root; access points select profile directories. Worker roles receive access-point permissions, not direct bucket access.
-The old project/retained-model fields did not affect sample IAM and are now rejected.
-
-### Configuration ownership
-
-| Input | Source |
-| --- | --- |
-| Stack and Runtime names, deployment region, model endpoint/model/region, lifecycle, and optional network/storage | Selected provision profile. |
-| Values referenced as `${NAME}` in the profile | Component-root `.env` only. Exported shell variables do not replace these values. |
-| Storage stack name | Provision profile's `s3Files.storageStackName`. |
-| Bucket and existing subnet/security-group IDs | Component-root `.env`, validated by `cdk/infrastructure-config.ts`. |
-| Package/version, Dockerfile, build arguments, default command, and recognition hint | Referenced `agent_images/NAME/image.json`. |
-| AWS authentication and account identity | Normal CDK credential chain and Toolkit `CDK_DEFAULT_ACCOUNT`. Credentials do not belong in deployment files. |
-
-The stack has no environment-variable lookup or profile-file read. It receives resolved properties.
-CDK formats generated ARNs from the selected account, region, and resource names.
-Missing bindings, invalid names, and unresolved account identity fail before resource synthesis.
-The deployment region always comes from `profile.region`. Inference uses `profile.inference.region` when present, otherwise the deployment region.
-ARM64, HTTP health/invocation, AWS IAM action names, and the service-created `DEFAULT` endpoint are implementation contract constants.
-They do not contain customer account IDs, regions, model IDs, or network/storage identifiers.
-
-### Bedrock endpoint selection
-
-Normal profiles need only a startup model:
-
-```json
-{
-  "inference": {
-    "modelId": "global.openai.gpt-5.6-sol"
-  }
-}
-```
-
-OpenCode selects the model's SDK and endpoint from its native catalog or image-defined model metadata.
-The Codex image defaults to the native `amazon-bedrock-runtime` provider.
-CDK omits `BEDROCK_ENDPOINT_TYPE` for these normal profiles. Each execution role permits both Runtime and Mantle calls.
-
-If a startup model needs an explicit route, set the optional `inference.bedrock-endpoint-type` override:
-
-| Value | Codex provider | OpenCode SDK for the startup model |
-| --- | --- | --- |
-| Omitted | `amazon-bedrock-runtime` | Native model metadata; no SDK override. |
-| `"runtime"` | `amazon-bedrock-runtime` | `@ai-sdk/amazon-bedrock` (Converse) |
-| `"mantle"` | `amazon-bedrock` | `@ai-sdk/amazon-bedrock/mantle` |
-
-Use Bedrock Runtime and Bedrock Mantle as display names. Explicit JSON overrides and `BEDROCK_ENDPOINT_TYPE` use lowercase identifiers.
-The parser rejects `inference.api`, `inference.endpoint-type`, null/empty override values, display names, and alternate spellings. Omission is valid.
-Do not repeat `BEDROCK_ENDPOINT_TYPE` in profile `environment`; CDK exports it only from the optional override.
-For Mantle, choose a Mantle model ID and a supported inference region together. Runtime inference-profile IDs do not select Mantle models.
-Endpoint selection does not translate model IDs or automatically switch endpoints after a failure.
-
-Only an explicit override makes OpenCode add the startup model's SDK setting to `OPENCODE_CONFIG_CONTENT`.
-Without it, the launcher preserves that setting as supplied and does not generate a new overlay. User configuration files are preserved.
-If supplied, this environment setting must contain a JSON object. User configuration files are preserved.
-The pinned Mantle loader uses Responses for normal models. Select a model compatible with that API.
-Later model selections use OpenCode's native catalog. Each entry carries endpoint information, and the role permits both supported routes.
-Codex instead selects an endpoint-specific provider and catalog at startup. IAM permission for both endpoints does not merge its two native providers.
-Codex disables hosted web search for Runtime because that endpoint does not provide the tool.
-
-#### Model switching: endpoint and history limits
-
-OpenCode's Bedrock picker contains entries for both endpoints. Normal profiles let each entry select its own route.
-For example, `GPT-6 Astra (Global)` uses `global.openai.gpt-6-astra` through Runtime.
-The unqualified `GPT-6 Astra` entry uses `openai.gpt-6-astra` through Mantle. Its earlier IAM denial exposed the startup-endpoint restriction in the role policy.
-The shared stack now grants both inference paths to each role. Users can select compatible models without changing IAM for each endpoint.
-A listed model still needs account access, regional availability, and compatible retention and API settings.
-After the policy update, Ireland Mantle returned 404 for `openai.gpt-6-astra`; its regional model list did not include that ID.
-Both OpenCode profiles passed Global Astra through Runtime and `openai.gpt-oss-20b` through Mantle. The startup environment remained Runtime for both calls.
-
-Codex 0.163.0 has a separate history-compatibility issue on Bedrock Runtime.
-It retains encrypted reasoning items when changing models. Replaying a Sol reasoning item to Astra stalled after `response.created`, despite HTTP status 200.
-Replaying the same history to Sol completed. Omitting only the reasoning item from the synthetic cross-model request also completed.
-The native CLI reproduced the stall for Sol tool history resumed with Astra or Luna. Fresh conversations and simple text-only history passed for both models.
-This is not a missing Runtime invocation grant. The separate dual-endpoint IAM and Ireland retention changes do not fix the Codex history issue.
-
-For an affected Codex conversation:
-
-1. Press Esc to interrupt the stalled turn before changing models again. A picker change does not replace the model already serving an active turn.
-2. If you must retain that conversation, select its original model. A disposable native CLI probe recovered by returning to `global.openai.gpt-5.6-sol`.
-3. If you need a different model, use `/new` to start a separate conversation, then select the desired Global model before submitting work.
-
-Keep the original conversation for reference. Automatic history conversion is not implemented; do not edit live transcript or database files as a workaround.
-Fresh-conversation switching is verified. Seamless cross-model continuation with encrypted reasoning remains an upstream compatibility gap.
-An extended OpenCode test also found a history-compatibility limit. Kimi to Global Astra preserved a user-defined label in the same conversation.
-Continuing that mixed history with GPT-OSS 20B on Mantle returned HTTP 400 from Responses input validation, while a fresh Mantle conversation passed.
-Native routing and IAM access therefore do not guarantee that every pair of models can share the same history.
-
-### Model registration and limits
-
-The pinned OpenCode catalog is checked for each selected model. Kimi K3 required explicit registration.
-The shared OpenCode image registers Kimi K3 once in `agent_images/opencode/opencode.json`.
-Its 8,192-token output limit is an application setting, not a claim about the vendor's maximum.
-Both OpenCode profiles reuse that catalog entry. The profile chooses the model ID but does not repeat its metadata.
-
-AWS documents a Kimi K3 Converse multi-turn limitation when earlier reasoning content is included again.
-The current OpenCode provider uses Converse. Validate multi-turn and tool use before relying on this profile for work.
-AWS recommends Chat Completions or Responses for Kimi K3. Changing the provider API needs a separate compatibility check.
-The tested OpenCode conversation, attachment, and shell-time flow passed for Kimi K3 without disabling reasoning.
-Kimi K2.5 and DeepSeek V3.2 offer regional inference in London and Stockholm, but their published regional lists do not include Ireland.
-
-Ireland's Bedrock Runtime account retention setting is now `default`, as explicitly requested by the user for GPT-5.6 Sol.
-Earlier Sol/Astra requests were rejected when that setting was `none`. `default` permits the model's AWS safety/abuse retention policy; it is not zero data retention.
-An `ACTIVE` inference profile does not prove that the account's retention mode permits inference.
-The managed zero-retention guard has an Ireland-only exception in its retention rules. Its other-region rules and invocation-logging restrictions remain in place.
-The user subsequently authorized Ireland's separate Mantle setting to change from `none` to `default`.
-A separate agent applied that account change and verified both endpoints as `default`; the guard policy remained unchanged at version v2.
-Do not add account-retention updates to CDK deployments or change other regions as part of a profile update.
-The earlier GLM 5.3 results and superseded GPT-OSS/Mantle configuration are historical evidence, not the current startup model.
-
-### Fill the shared network and storage bindings
-
-Only S3-backed profiles require infrastructure variables. The two PUBLIC samples need no `.env` bindings.
-The [TypeScript infrastructure stack](cdk/infrastructure-stack.ts) adapts the [AWS sample template](https://github.com/awslabs/agentcore-samples/blob/abab3d8beb684c79fc827a95a2d015e44e76dbbc/01-features/02-host-your-agent/01-runtime/04-coding-agents/03-code-agents-competition-e2e/coding_agents/infra/cfn-vpc.yaml).
-It manages the S3 Files service role, filesystem, and mount targets. Each runtime stack manages its profile-specific access point.
-The VPC, subnets, security groups, and backing S3 bucket must already exist in the deployment account and region.
-CDK does not create or delete those external resources. Supply private subnets in distinct AgentCore-supported Availability Zones, from one VPC.
-The supplied security groups must belong to that VPC and permit NFS and required egress. Network creation and repair are external operations.
-
-1. If `src/agentcore_runtime/.env` does not exist, run these commands from the repository root:
-
-   ```bash
-   cp src/agentcore_runtime/.sample.env src/agentcore_runtime/.env
-   chmod 600 src/agentcore_runtime/.env
-   ```
-
-2. Fill every `REPLACE_WITH_...` value in `src/agentcore_runtime/.env`. The filesystem uses the bucket root.
-3. Keep only these filesystem settings in the provision profile:
-
-   ```json
-   {
-      "s3Files": {
-        "storageStackName": "HerdrAgentStorage",
-       "mountPath": "/mnt/workspace",
-       "readOnly": false
-     }
-   }
-   ```
-
-| `.env` setting | Purpose |
-| --- | --- |
-| `S3_BUCKET_NAME` | Existing backing bucket. |
-| `VPC_SUBNET_IDS` | Comma-separated existing private subnet IDs, in stable order and distinct supported AZs. |
-| `VPC_SECURITY_GROUP_IDS` | Comma-separated existing security-group IDs. |
-
-The entrypoint resolves the component `.env` once. Stacks receive typed properties and make no SDK lookups.
-Access-point UID `1000`, GID `1000`, and directory mode `755` are fixed in CDK to match the supplied runtime images. They are not `.env` inputs.
-Missing required values, invalid network IDs, and invalid directory settings fail before synthesis.
-No VPC ID, CIDRs, AZ IDs, network Name prefix, legacy access-point root, or storage stack name is required in `.env`.
-Network membership, Availability Zones, NFS rules, and internet access must be checked by the external network owner.
-Environment-specific bindings are not hardcoded in CDK. IAM actions and resource logical IDs are implementation constants.
-AWS credentials remain in the normal credential chain, outside `.env`.
-
-### Access-point root mapping
-
-The [profile storage mapping](../../docs/STORAGE_MAPPING.md) uses one access point per profile and presents the profile root directly at `/mnt/workspace`.
-The filesystem uses the S3 bucket root. Each access point selects `/agent-filesystem/profiles/<provision-profile-name>` within that bucket.
-There is no separate filesystem-prefix setting. A non-empty obsolete `S3_FILES_PREFIX` value fails validation instead of silently changing the backing location.
-Existing objects under the old `agents/` location remain there; changing configuration does not move or delete them.
-
-### Profile-specific access points
-
-Managed storage creates one `WorkspaceAccessPoint` at `/agent-filesystem/profiles/<provision-profile-name>`.
-Its generated ARN is passed directly to that runtime and its IAM policy. Externally supplied access-point ARNs are not supported.
-Filesystem identifiers come from strong CloudFormation exports of the storage stack. Existing network IDs come directly from `.env`.
-Runtime stacks depend on that stack and its mount targets. The worker role permits only its own access point, plus required filesystem metadata reads.
-The S3 Files service role retains the sample's bucket/KMS/EventBridge permissions. Those permissions are not granted to workers.
-
-The access-point root becomes `/mnt/workspace`, which is also the default working directory.
-The launcher checks the mount and preserves existing files. It does not create another nested profile directory.
-Put `AGENTS.md`, `opencode.json`, `.opencode/skills/`, tools, and projects directly inside that mount.
-No workspace-base environment variable is required. An explicit working-directory override must remain inside the dedicated mount.
-For example, `agent-filesystem/profiles/example-profile/opencode.json` in S3 appears as `/mnt/workspace/opencode.json`.
-Different profile roots do not overlap, and each worker role permits only its own access point. Sessions of one profile deliberately share that profile's files.
-New roots contain no copied MCP configuration or tool files. Package caches and live OpenCode state remain local unless separately configured.
-Changing an access-point binding or profile name does not copy existing data automatically.
-
-### External network ownership
-
-The old combined infrastructure stack was removed after retaining its VPC, two private subnets, and security group.
-The current storage-only stack does not import those resources into CloudFormation ownership; it consumes their IDs as external bindings.
-The sample profile names the new storage stack `HerdrAgentStorage`. Stack names are profile settings, not environment variables or CDK constants.
-Legacy adoption parameters, network creation, and the shared sample access point are no longer part of the implementation.
-Dedicated access points remain in their runtime stacks, so deploying one profile does not remove another profile's access point.
-Destroying the storage/runtime stacks does not delete the external network or backing bucket.
-
-Start new sessions after the runtime switches access points. Existing sessions keep their old mounts, but the shared runtime role's permissions change during deployment.
-Coordinate active writers before switching. The original data is not moved, copied, or deleted by this implementation.
-
-AWS recommends direct-S3 object reads for large-I/O performance. Those reads use IAM/bucket policies rather than access-point POSIX permissions.
-The worker selects the access-point-only path. Earlier mount readiness and file checks passed after the directory-marker repair below.
-Separate runtime sessions wrote and read 4 KiB and 8 MiB files with identical hashes. The test removed only its own files and directory.
-These checks establish persistence across the tested session boundary. They do not qualify conversation checkpoints or every cold-read/performance case.
-
-#### Repair an imported directory's ownership
-
-The [AWS coding-agent sample](https://github.com/awslabs/agentcore-samples/blob/abab3d8beb684c79fc827a95a2d015e44e76dbbc/01-features/02-host-your-agent/01-runtime/04-coding-agents/03-code-agents-competition-e2e/coding_agents/infra/cfn-vpc.yaml) configures UID/GID `1000:1000`, root-directory mode `755`, and a managed S3 Files mount.
-Our access point already matched those settings. However, its backing directory existed only through child objects uploaded to S3.
-The directory marker was absent. S3 Files applied its documented default ownership `root:root` and mode `0755`, so the non-root agent could traverse the directory but could not create files.
-
-Follow [AWS's POSIX directory-metadata procedure](https://docs.aws.amazon.com/AmazonS3/latest/userguide/s3-files-posix-permissions.html):
-
-1. Read the filesystem's bucket/prefix and access point's root path with `get-file-system` and `get-access-point`.
-2. Resolve the directory marker key from that prefix and root path. Check it with `s3api head-object` before changing anything.
-3. If the marker is absent, create only that zero-byte marker. Set `BUCKET_NAME` and `DIRECTORY_KEY` from the metadata read in step 1:
-
-   ```bash
-   aws s3api put-object --bucket "$BUCKET_NAME" --key "$DIRECTORY_KEY" \
-     --metadata '{"file-owner":"1000","file-group":"1000","file-permissions":"0040755"}' \
-     --if-none-match '*'
-   ```
-
-4. If a marker already exists, inspect its metadata and content headers first. Follow AWS's copy-in-place procedure, preserving unrelated metadata and content. Do not replace it with an empty object.
-5. Verify the metadata with `head-object`, then test a fresh runtime session as UID 1000.
-6. Follow the [AWS sample's separate-session test](https://github.com/awslabs/agentcore-samples/blob/abab3d8beb684c79fc827a95a2d015e44e76dbbc/01-features/01-harness/01-advanced-examples/14-s3-filesystem/README.md): write in session A, stop it, read in session B, and remove only the probe's files.
-
-This is a targeted data-metadata repair by the storage operator. It does not change child-object ownership, the runtime user, or runtime IAM.
-No new mount helper or provisioning loop is required. Resolve the repair target from deployed metadata and confirm it before any write.
-
-The file system, access point, mount targets, and Runtime must be in the same account and VPC.
-Runtime subnets must overlap with mount-target Availability Zones. Allow NFS TCP 2049 in both security groups.
-Match access-point POSIX ownership to the image's agent user, UID/GID 1000:1000.
-The VPC also needs access to the Bedrock endpoint and any required tool services through suitable endpoints or egress.
-The deployment principal must be able to create the AgentCore network service-linked role if it does not exist.
-The runtime role receives separate, resource-scoped permissions for filesystem metadata reads and NFS client operations.
-Do not apply the NFS `s3files:AccessPointArn` condition to metadata lookups. Cloud creation requires `GetAccessPoint` and `ListMountTargets` access.
-For a customer-managed KMS key, add the required key-scoped decrypt permission before deployment; the example does not grant arbitrary KMS access.
-
-AgentCore performs the mount when a session is invoked. The image does not install a custom mount daemon.
-The launcher requires the configured mount before it starts OpenCode. It does not fall back to ephemeral workspace data.
-These profiles mount coding files only. Conversation checkpoints and automatic recovery remain separate work.
-Sessions using the same access point share mounted data. Use separate worktrees or directories for concurrent editing.
-
-### Synthesize, review, and deploy
-
-Run from the repository root. All three commands load the selected profile and `src/agentcore_runtime/.env`:
-
-```bash
 npm --prefix src/agentcore_runtime/cdk run cdk -- synth \
   -c runtimeProfile=opencode-agentcore-profile-2
 npm --prefix src/agentcore_runtime/cdk run cdk -- diff \
   -c runtimeProfile=opencode-agentcore-profile-2
-npm --prefix src/agentcore_runtime/cdk run cdk -- deploy HerdrOpenCodeRuntime \
+```
+
+Review the diff before deployment. Use official CDK commands, a configured AWS credential chain, and an ARM64-capable Docker builder.
+The target account/region needs the standard CDK bootstrap resources.
+
+```bash
+npm --prefix src/agentcore_runtime/cdk run cdk -- deploy \
   -c runtimeProfile=opencode-agentcore-profile-2 \
   --outputs-file "$PWD/.local/deployments/opencode-agentcore-profile-2.json"
 ```
 
-For the filesystem example, first fill `src/agentcore_runtime/.env`, then synthesize and review `opencode-s3filesystem-agentcore-profile-3` before deployment:
+For the S3 profile, deploy both selected stacks with `--all` if CDK requests a stack selection.
+Deployment does not update connector profiles or change account retention settings.
+Synthesize from the current checkout before deploying a change.
+
+## Connection output
+
+The stack exports `RuntimeArn`, `RuntimeId`, and `ConnectionDescriptor`.
+The descriptor contains only ARN, explicit launch argv, and an optional endpoint inside its versioned envelope.
+CDK ARN tokens resolve during deployment. The consumer derives the region from the resolved ARN.
+Local recognition hints, host credential selection, and profile labels belong to the connector.
+
+The producer in `cdk/connection.ts` is implemented locally.
+Its output is checked against the schema and fixtures pinned under `contracts/v1/` at the repository root.
+The runtime does not load a plugin package or import a sibling repository during synthesis or execution.
+
+## Runtime behavior and limits
+
+The samples use a 900-second idle timeout and 28,800-second maximum compute lifetime.
+These are platform lifecycle settings, not a timer based only on keyboard input.
+WebSocket traffic and work-health reports can affect idle accounting.
+
+OpenCode reports tracked work through short-lived, PID-validated health leases.
+Question and permission waits are idle only when no other tracked work remains.
+Codex currently supplies readiness health; it does not have the same work reporter.
+No advancing `time_of_last_update` is sent to AWS.
+
+The PUBLIC profiles start in `/home/agent`; the S3 profile starts in `/mnt/workspace`.
+Only mounted files persist across compute replacement. Default home and conversation state remain ephemeral.
+Do not point multiple runtimes at a shared live conversation database without a separate persistence design.
+
+Native AWS role providers handle model credentials. The launcher does not export credential snapshots.
+Execution roles permit both Bedrock Runtime and Mantle inference, independently of startup routing.
+The image keeps OpenCode auto-update disabled.
+Changing model providers in a saved conversation can expose provider-specific history limitations.
+
+## Development tools and MCP
+
+The images include pinned Python, Node.js, uv/uvx, pnpm, Go, Rust, Git, GitHub CLI, AWS CLI, and common build tools.
+Exact versions and checksums are in each image definition.
+Caches and disposable tool environments use `/tmp/agentcore`.
+Persistent MCP source and lockfiles can live in `/mnt/workspace/tools/`.
+Native MCP registrations belong in `/mnt/workspace/opencode.json`.
+The optional `agentcore-mcp` command rebuilds a locked Python tool project into local runtime storage.
+No specific MCP server or GitHub credential broker is installed by default.
+
+## Validation
 
 ```bash
-npm --prefix src/agentcore_runtime/cdk run cdk -- synth \
-  -c runtimeProfile=opencode-s3filesystem-agentcore-profile-3
-npm --prefix src/agentcore_runtime/cdk run cdk -- diff \
-  -c runtimeProfile=opencode-s3filesystem-agentcore-profile-3
-npm --prefix src/agentcore_runtime/cdk run cdk -- deploy HerdrOpenCodeS3FilesystemRuntime \
-  -c runtimeProfile=opencode-s3filesystem-agentcore-profile-3 \
-  --outputs-file "$PWD/.local/deployments/opencode-s3filesystem-agentcore-profile-3.json"
+uv run --frozen ruff check src scripts
+uv run --frozen ruff format --check src scripts
+uv run --frozen pytest -q --tb=short
+npm run check --prefix src/agentcore_runtime/cdk
+npm test --prefix src/agentcore_runtime/cdk
+uv run --frozen python scripts/check_repository.py
 ```
 
-CDK deploys the storage dependency first. Its CDK stack ID is `CodingAgentsInfrastructure`; its CloudFormation name comes from `s3Files.storageStackName`.
-The runtime outputs include `WorkspaceAccessPointArn` and `ProfileWorkingDirectory`. Managed access points also expose `WorkspaceRootDirectory`.
-
-To verify a newly created empty root, run the opt-in probe against the selected runtime:
+Build an image after changing image behavior:
 
 ```bash
-uv run --frozen python src/agentcore_runtime/tests/live_profile_storage.py \
-  --runtime-arn "$RUNTIME_ARN" --mount-path /mnt/workspace
+uv run --frozen python src/agentcore_runtime/tests/build_runtime_image.py \
+  opencode --tag agentcore-tools:opencode
+uv run --frozen python src/agentcore_runtime/tests/build_runtime_image.py \
+  codex --tag agentcore-tools:codex
 ```
 
-The probe requires an empty root. It checks non-root writes, absence of inherited MCP settings, and a matching read in a second fresh runtime session.
-It removes only its own file and requests stop for each of its sessions.
+Set `HERDR_RUNTIME_TEST_IMAGE` and `CODEX_RUNTIME_TEST_IMAGE` to those tags to enable the corresponding container checks.
+The Docker context uses the repository root and includes root LICENSE and NOTICE.
+CDK excludes deployment inputs, credentials, tests, and unrelated image adapters from its assets.
 
-To change a binding, edit `src/agentcore_runtime/.env` or the selected profile, then review `cdk diff`.
-External `profileDirectory` context is rejected. Do not keep a second active set of profiles in a home-directory configuration folder.
-The storage stack owns S3 Files resources. Each S3 runtime owns its profile-specific access point. The network and backing bucket remain externally owned.
+## Live probes
 
-## Step 4: deploy the Codex example profile
+Live probes require explicit authorization. They create disposable sessions and stop only those sessions.
+The ARN parser used by probes is local to this repository.
 
-The `codex-agentcore-profile-1` settings select the Codex image and PUBLIC networking.
-The container adapts the [AWS Codex sample](https://github.com/awslabs/agentcore-samples/tree/abab3d8beb684c79fc827a95a2d015e44e76dbbc/01-features/02-host-your-agent/01-runtime/04-coding-agents/03-code-agents-competition-e2e/coding_agents/codex).
-It pins Codex 0.163.0 and uses Codex's native `amazon-bedrock-runtime` provider with the AWS credential chain.
-It does not generate or export a one-time bearer token, disable approvals, or overwrite user configuration.
-
-The example model is `global.openai.gpt-5.6-sol` through Bedrock Runtime in `eu-west-1`.
-The adapter passes the inference region through `model_providers.amazon-bedrock-runtime.aws.region`; the native provider selects its endpoint URL.
-Verify current model availability and your account's inference access before deployment.
-Edit the selected profile's `inference.modelId` and optional `inference.region` to choose another supported model/region pair.
-
-```bash
-npm --prefix src/agentcore_runtime/cdk run cdk -- synth \
-  -c runtimeProfile=codex-agentcore-profile-1
-npm --prefix src/agentcore_runtime/cdk run cdk -- diff \
-  -c runtimeProfile=codex-agentcore-profile-1
-npm --prefix src/agentcore_runtime/cdk run cdk -- deploy HerdrCodexRuntime \
-  -c runtimeProfile=codex-agentcore-profile-1 \
-  --outputs-file "$PWD/.local/deployments/codex-agentcore-profile-1.json"
-```
-
-Codex uses the shared health server but has no work-event reporter. It currently provides readiness health only.
-Do not treat process existence as active work. Long-running work can still reach the idle timeout.
-Earlier Codex revisions and model selections passed cloud inference, a sandboxed shell tool, and attachment probes.
-Long-duration behavior, broader tool and approval cases, and full credential rollover require separate validation.
-
-Local validation built the ARM64 Codex image and started its CLI with networking disabled.
-Both shared-image profiles were deployed to disposable test runtimes for cloud E2E validation.
-
-### Codex sandbox configuration
-
-Codex 0.163.0 can fail before it executes a shell tool on AgentCore.
-With whole-root read access, its sandbox sees containerd rootfs aliases.
-Codex tries to mask its daemon directory at those aliases. AgentCore denies creation of the parent directories.
-The resulting `bwrap: Can't mkdir parents` error is not a failed shell command or model-authentication error.
-
-The image uses the native `agentcore-workspace` permission preset in [codex-config.toml](agent_images/codex/codex-config.toml).
-This is a Codex permission preset, not a CDK runtime profile or a Herdr connection profile.
-It permits reads of `:minimal` system paths and writes in workspace roots and temporary directories.
-It marks `.git`, `.agents`, `.codex`, and `.aws` under workspace roots as read-only.
-It does not grant whole-root access, enable sandbox networking, or override the approval policy.
-
-The build hook creates `/home/agent/.codex/config.toml` with mode `0600` and exclusive creation.
-The launcher does not rewrite this file. A mounted or user-supplied configuration must retain the intended permission preset.
-New runtime sessions use the new image. Existing sessions keep their image and process configuration.
-
-The AWS sample's headless path uses `--yolo`. This image instead retains Codex's native sandbox with narrower filesystem permissions.
-The shared Dockerfile can install this configuration through its existing adapter build hook.
-No separate Codex Dockerfile or privileged container is needed for this fix.
-
-Run the opt-in probe against an authorized deployment:
-
-```bash
-uv run --frozen python src/agentcore_runtime/tests/live_codex_sandbox.py \
-  --runtime-arn "$RUNTIME_ARN"
-```
-
-The probe uses a fresh session and stops it in cleanup.
-It checks workspace writes, protected metadata, hidden daemon/containerd paths, and a blocked network probe.
-It also confirms that a file outside the workspace remains unchanged.
-An unmounted parent can be sandbox-local temporary storage; a successful local write does not imply a host-file change.
-The model check requires a completed `command_execution` event with successful `date` output. Model text alone does not pass.
-
-For the interactive Herdr path, run the existing isolated probe with `--agent-kind codex --check-shell-time`.
-That option requests `date` after the attachment checks. It does not approve a blocked dialog.
-
-## Step 5: register the deployment in Herdr
-
-Install the connector and link the root plugin manifest if needed:
-
-```bash
-uv sync --frozen --no-dev
-herdr plugin link "$PWD"
-```
-
-Import OpenCode's CDK outputs:
-
-```bash
-.venv/bin/herdr-agentcore configure \
-  --cdk-outputs .local/deployments/opencode-agentcore-profile-2.json \
-  --stack HerdrOpenCodeRuntime \
-  --profile opencode-agentcore-profile-2 \
-  --config-dir "$(herdr plugin config-dir agentcore)"
-```
-
-Import the filesystem sample with its own output file, `--stack HerdrOpenCodeS3FilesystemRuntime`, and `--profile opencode-s3filesystem-agentcore-profile-3`.
-For Codex, use its output file, `--stack HerdrCodexRuntime`, and a separate local connection profile name.
-Add `--replace` only when replacing a saved connection profile.
-The exported `ConnectionDescriptor` includes ARN, endpoint, explicit command, runtime-profile reference, and recognition hint.
-Host credentials remain a local connector choice.
-Use the numbered provision profile names as local labels when importing the three examples, unless you deliberately choose other labels.
-Imports preserve an existing default. Check saved profiles before launching; older labels can still point to retired runtime ARNs.
-Use `action new --profile NAME` to select a current profile, or run `set-default NAME` explicitly.
-Follow the [existing-runtime guide](../../docs/CONNECT_EXISTING_RUNTIME.md) to open, verify, detach, and reattach a session.
-
-## Launch command selection
-
-The image definition declares the command. A provision profile can override it explicitly.
-The contract receives validated, resolved argv. The connector has no default command and does not infer one from an image name.
-The shared examples use `/app/run.sh`; this path is not an AgentCore or Herdr requirement.
-It starts an assistant when the connector opens a new session; the container's default process is the health service.
-
-Set `command` in the selected provision profile to override the image's argv:
-
-```json
-{
-  "command": ["/opt/assistant/start", "--project", "/workspace/my project"]
-}
-```
-
-Use the same profile during synth, diff, and deploy. Per-field context overrides, including `-c command`, are rejected.
-The profile command changes connection output, not Docker `CMD` or installed files.
-The executable must exist in the image. The recognition hint must match the assistant that it starts.
-
-## Add a runtime for another project
-
-1. Copy an example as `provision_profiles/NAME.json` inside the runtime component.
-2. Set distinct `stackName` and `runtimeName`. Set the Runtime `region`; add optional tags only when needed.
-3. Select the image with `image: "opencode"` or another repository image reference. Do not copy its build arguments or startup defaults.
-4. Set `inference.modelId`. Omit the endpoint override for native OpenCode routing or Codex's Runtime default. Set `inference.bedrock-endpoint-type` only for a deliberate advanced override. Set `inference.region` only when it differs from the Runtime region. Verify model/API availability and retention eligibility.
-5. Let CDK derive `AWS_REGION`, `BEDROCK_INFERENCE_REGION`, and `BEDROCK_MODEL_ID`. It exports `BEDROCK_ENDPOINT_TYPE` only for an explicit override. Do not repeat these fields in `environment`.
-6. Add `s3Files` with `storageStackName`, `mountPath`, and `readOnly` to use shared storage and create a dedicated access point. Its root includes the new provision profile's name.
-   Omit `vpc` and `s3Files` for PUBLIC networking. Explicit `vpc` bindings are only for profiles without managed S3 Files.
-7. Omit `workingDirectory` to use the access-point mount root, or the image home without a mount. An S3 override must select an existing directory inside its dedicated mount.
-8. Set `lifecycle` values in seconds. The sample's inference policy permits live model changes without enumerating model IDs.
-9. Run type checks, tests, and `cdk synth -c runtimeProfile=NAME` from `cdk/`.
-10. Review `cdk diff`, then deploy with the same profile and `.env`, and an outputs file under `.local/deployments/`.
-11. Import that descriptor into a separate Herdr connection profile.
-12. Test the model, a harmless shell tool, mounted files, multi-turn conversation, and attachment in a disposable session.
-
-Do not copy the OpenCode source directory for each project. Model, region, storage, and lifecycle differences belong in provision profiles.
-Adding a genuinely different agent environment requires an adapter and `image.json` under `agent_images/NAME/`, plus a profile that selects it.
-Runtime ARN, region, command, and recognition hint still cross the small shared connection contract. The connector does not interpret storage or model settings.
-
-No connector switch statement or assistant-name enum is needed.
-The current stack supports Bedrock Runtime and Bedrock Mantle inference policies. Other inference services require an appropriate CDK policy extension.
-
-### Sample model permissions
-
-Each role grants `bedrock:InvokeModel` and `bedrock:InvokeModelWithResponseStream` on `*`, plus `bedrock:ListInferenceProfiles` for discovery.
-It also grants `bedrock-mantle:CreateInference` on projects in the configured inference region and deployment account.
-These grants are independent of the startup endpoint. They do not grant `bedrock:*`, `bedrock-mantle:*`, or account-retention administration.
-`inference.modelId` selects the startup model. A compatible model change across either authorized endpoint needs no per-model IAM update.
-Model availability, subscriptions, service controls, and the account's retention policy still apply.
-Unused `inference.retainedModelIds`, `inference.project`, and `retainedModelIds` context values have been removed and are rejected.
-Storage, runtime-role trust, ECR, and logging permissions retain their separate resource scopes.
-An earlier revision deployed this invocation-policy change to the two then-existing EU stacks. The reviewed changes affected only their execution-role policies.
-Two existing OpenCode sessions selected Claude Sonnet 5 (EU) and returned `SONNET5_LIVE_OK` after that update, without restarting their sessions.
-The provision profiles' startup models were not changed for that live selection. All three current profiles use the dual-endpoint policy described above.
-
-## Current validation
-
-### Fresh all-profile deployment — 2026-10-20
-
-The user confirmed removal and recreation of all three runtime stacks and the storage stack.
-The old stacks were verified absent before deployment. The retained network egress stack and S3 bucket/data were preserved.
-All replacement stacks are `CREATE_COMPLETE`. Each runtime and `DEFAULT` endpoint is version 1 and `READY`.
-Both ARM64 image builds, all 236 Python tests, 29 CDK tests, TypeScript, Ruff, and final stack diffs passed.
-Two disposable S3 sessions verified an empty profile root, non-root writes, matching cross-session data, and probe cleanup.
-The saved Herdr profiles were updated and six independent user sessions were opened in three tabs.
-All six completed real UTC time and directory checks. Codex/plain OpenCode use `/home/agent`; S3 OpenCode uses `/mnt/workspace` with the dedicated access-point root.
-The user sessions remain open. Temporary Docker credentials were removed after publishing.
-
-### Dedicated profile-root migration — 2026-10-20
-
-The current code enforces one access point per S3-backed profile. Existing-access-point inputs are rejected.
-The S3 runtime was undeployed before replacement. The storage and network stacks were retained.
-The replacement runtime and `DEFAULT` endpoint are version 1 and `READY`; its access point is rooted at `/agent-filesystem/profiles/opencode-s3filesystem-agentcore-profile-3`.
-Mount and working directory are both `/mnt/workspace`. The launcher creates no nested `profiles` directory.
-
-The old duplicated prefix contained only three empty directory markers. Their deletion was explicitly approved and verified; unrelated legacy sample data was preserved.
-TypeScript, all 29 CDK tests, Ruff, and runtime checks passed (86 passed, six opt-in skips). The OpenCode ARM64 image built successfully.
-Fresh-session checks passed empty-root startup, non-root persistence across sessions, Herdr model/attachment/context/shell-time flow, and native tool/build/install checks.
-Direct MCP calls passed. The first native model attempt echoed the requested text without calling the tool and was correctly rejected by the test.
-A fresh retry produced a completed MCP tool call, and a second session rebuilt the same persisted MCP definitions. Test files were removed and all probe sessions received stop requests.
-Two replacement S3 user sessions confirmed `/mnt/workspace` and were left open. The two Codex and two plain OpenCode user sessions were not replaced.
-Only the S3 runtime was redeployed for this change. Final S3/storage diffs were clean; the other runtimes retain their previous images until a separate deployment.
-
-### Reviewed redeployment and E2E — 2026-10-20
-
-The superseded runtime/storage stacks were removed before the final deployment, as requested. The separate network egress stack was retained.
-All three runtime stacks, the storage stack, and the external egress stack reached `CREATE_COMPLETE`. Runtime/DEFAULT versions are 1 and `READY` for all profiles.
-The three saved Herdr profiles were updated from current outputs. The S3 profile mounts its managed access point and works in `profiles/<profile-name>` inside that mount.
-The managed access-point root is `/<profile-name>` in the bucket. Existing-access-point sharing is explicit and keeps the access point's original root.
-
-Validation passed:
-
-1. Both ARM64 builds, 235 Python tests, all 30 CDK tests, TypeScript, Ruff, and the privacy guard.
-2. All three isolated Herdr flows: native model call, runtime-role credentials, detach, same-session attachment, context follow-up, shell-time call, and stop.
-3. Deployed tool/helper hashes, native builds, local installation, and actual generic MCP protocol calls on all runtimes.
-4. Native OpenCode MCP model calls on both OpenCode profiles. A second S3 session rebuilt the MCP environment from unchanged persistent definitions.
-5. Both OpenCode activity/question/reply/process-death probes and the Codex sandbox/model probe.
-6. Empty profile-directory startup, non-root writes, and a matching read in a second session.
-7. Two temporary profile directories under one access point loaded only their own MCP configurations, including after a fresh session. This is configuration separation, not filesystem access isolation.
-8. Public HTTPS access to GitHub and the npm registry from the S3 runtime.
-
-All disposable sessions received stop requests, isolated Herdr servers stopped, and only test-owned persistent files were removed.
-The new profile namespace contains no data files after cleanup. Existing sample data under the old location was preserved.
-Final diffs for every deployed stack were clean. The temporary Docker credential file was removed after publishing.
-The network repair is a separate operator-owned CDK stack; its definition and inputs are retained under ignored `.local/deployments/network-egress*`.
-
-### Teardown status — 2026-10-20
-
-The user requested deletion of the three runtime stacks, adopted infrastructure stack, and older AWS-sample OpenCode runtime.
-All four runtimes are absent, and all three runtime stacks are deleted. A checked retry resolved a CloudFormation runtime-deletion stabilization timeout.
-Infrastructure deletion initially failed because AWS-managed interfaces held the private subnets and security group.
-The user then requested retention of the network. CloudFormation deletion completed with the VPC, both private subnets, and security group retained.
-The filesystem, access points, filesystem service role, NAT gateway, public subnets, and internet gateway are deleted.
-The backing S3 bucket and original workspace configuration still exist. The CDK bootstrap and local Herdr plugin remain installed.
-Those retained network resources are now outside the deleted stack's management. Do not delete them as cleanup.
-The storage-only refactor passes TypeScript and 27 CDK tests, including bucket-root and no-EC2-resource checks. It has not been deployed.
-Saved connection profiles and deployment outputs reference deleted runtimes. The deployment results below are historical evidence.
-
-### Managed infrastructure and profile storage — 2026-10-20
-
-The AWS sample infrastructure is now managed by the repository's TypeScript CDK.
-The evaluated adoption change set changed only resource metadata; all 23 original resource identities and properties were preserved.
-The shared infrastructure stack and S3 runtime stack reached `UPDATE_COMPLETE`.
-The S3 runtime and `DEFAULT` endpoint reached version 5 and `READY`. The other two runtimes remain at version 4.
-The runtime ARN and connection descriptor stayed unchanged. The image was refreshed to include the expanded root attribution notice.
-
-The S3 profile now owns a dedicated access point rooted at `/profiles/opencode-s3filesystem-agentcore-profile-3`.
-The runtime still mounts that root at `/mnt/workspace`. The user selected an empty workspace; existing sample data was not copied or deleted.
-Two disposable sessions verified an initially empty mount, a non-root 4 KiB write, a matching read after the first session's stop request, and an empty root after cleanup.
-The first session's effective OpenCode configuration had no MCP servers. Both probe sessions received stop requests.
-Both final CDK diffs reported no differences. TypeScript and all 26 CDK tests passed; the default Python run passed 212 tests with 18 opt-in skips.
-All 21 OpenCode image tests passed against the deployed image asset. The privacy audit reported zero findings.
-Live verification of two different profile mounts remains separate from the two-profile synthesis tests.
-
-Runtime versions, assistant package versions, and descriptor version 1 are separate values.
-The dated results record observations, not a live session inventory. Check current state before later operations.
-
-### Coding tools and generic MCP deployment — 2026-10-20
-
-The shared toolchain and generic MCP helper were deployed to all three existing stacks.
-Each CDK diff changed only the container image. The final Runtime and `DEFAULT` endpoint versions reached 4 and `READY`.
-Runtime ARNs, launch commands, model selection, IAM, lifecycle, and storage bindings were unchanged.
-No particular MCP server was installed or registered as a production default.
-
-Both ARM64 builds passed. Local validation passed 230 Python tests, including both image suites, and 22 CDK tests.
-Ruff, TypeScript, package/legal-file checks, documentation checks, and the privacy guard passed.
-Codex's native sandbox exposed three tool-discovery requirements: an explicit uvx launcher, a linker-cache entry for Rust libraries, and `GOROOT` for Go.
-The image now supplies them. The sandbox permission preset did not change.
-The final cache check found that pnpm 12 ignored `npm_config_store_dir` and could not always read home configuration inside the sandbox.
-Version 4 supplies its native `PNPM_CONFIG_STORE_DIR` variable. Tests verify the effective store path in both images and in the deployed runtimes.
-
-Fresh cloud sessions verified:
-
-1. Installed tool versions and hashes of the deployed launchers and shared tool helpers.
-2. Python 3.15/3.13 native extensions, a Node native addon, C++, OpenSSL, Go, and Rust builds.
-3. A non-root local npm CLI installation and command discovery through `PATH`.
-4. Locked installation of a disposable local Python wheel, MCP initialization, tool discovery, and an actual tool call on all three profiles.
-5. Real OpenCode model calls to the disposable MCP tool on both OpenCode profiles.
-6. A second S3-backed runtime rebuilding that MCP from the same persistent manifest, lockfile, and test fixture. The files remained unchanged by startup.
-7. Codex sandbox isolation and a real model-driven `date` call.
-8. Both OpenCode deployments reporting idle, busy, completion, and process-death cleanup correctly.
-
-The first headless model probes inherited open stdin and timed out. Closing probe stdin explicitly fixed the harness; the same deployed images then passed.
-Every disposable session received a stop request. Cleanup removed only the probes' named S3 files and directories.
-All three stacks reached `UPDATE_COMPLETE`. Final CDK diffs showed no changes.
-Existing user sessions were preserved. New sessions use version 4; existing sessions retain their current image.
-One version-4 S3 model turn returned no completed tool event; a fresh retry passed, including second-session reconstruction.
-Docker Desktop's credential helper stalled during the final OpenCode publication. A temporary Docker credential store allowed the CDK deployment to finish. That temporary credential file was removed.
-These results qualify the tested generic bootstrap path. Package-specific dependencies and external package-source availability remain each MCP definition's responsibility.
-Per-binding storage allocation, conversation checkpoints, and automatic resume remain separate work.
-
-### Launcher deployment and E2E — 2026-10-19
-
-The startup path is now `run.sh` → image-specific `run.py` → the native assistant.
-The separate forwarding entrypoint was removed. Shared startup helpers remain in `common/runtime.py`.
-The repository contains one `LICENSE` and one `NOTICE`, both at its root. Image and package builds include those texts from the root sources.
-Docker now uses the repository-root context with an allowlist. CDK staging additionally excludes the unselected adapter and all deployment bindings.
-Both ARM64 image builds, TypeScript, 21 CDK tests, and 217 Python tests passed.
-Python source distributions, wheels built from those distributions, and direct wheel builds passed legal-file content checks.
-The two image assets were then deployed to all three existing profile stacks. Each reviewed diff changed only the runtime image reference.
-All stacks reached `UPDATE_COMPLETE`. Every Runtime and `DEFAULT` endpoint reached version 2 and `READY`; runtime ARNs and connection commands were unchanged.
-
-Fresh-session cloud checks passed:
-
-1. All three deployed images matched the source hashes for `run.sh`, the selected `run.py`, `runtime.py`, `LICENSE`, and `NOTICE`. The obsolete entrypoints and endpoint override were absent.
-2. All three isolated Herdr flows passed default selection, native recognition, a real model response, runtime-role inspection, detach/attachment, context follow-up, a real `date` tool, and the stop action.
-3. Codex passed its native sandbox and model-driven shell-tool checks.
-4. Both OpenCode profiles passed work/busy, question/wait/idle, reply/busy, completion/idle, and process-death health checks. The PUBLIC profile's first question wait exceeded 30 seconds; a fresh-session retry passed.
-5. Both OpenCode profiles returned real responses from Global Astra through Runtime and GPT-OSS 20B through Mantle.
-6. The S3 Files profile passed 4 KiB and 8 MiB writes in one session and matching reads in another. Cleanup removed the probe's files.
-
-Every disposable probe session received a stop request, and all isolated Herdr servers stopped.
-Final CDK diffs showed no changes. Both Ireland account retention settings remained `default`.
-New sessions use the updated images. Existing user sessions were not replaced as part of this update.
-The earlier cross-model history limitations remain; this update changes launcher structure and packaging, not the native model clients.
-
-### Model-only profile rebuild — 2026-10-19
-
-The sample profiles now specify only `inference.modelId`. The endpoint field is an optional advanced override.
-Codex defaults to native Runtime in its image. OpenCode uses model metadata without a generated SDK-selection overlay.
-The shared Kimi entry declares its Runtime SDK once. All execution roles still permit both inference endpoints.
-
-At the user's request, all six existing project sessions were detached and received stop requests.
-Official CDK destroy commands deleted the three numbered stacks. AWS reads confirmed their old runtimes and execution roles absent.
-Fresh CDK deployments recreated all three stacks with new runtime ARNs. Shared VPC, S3 Files, and bootstrap resources were preserved.
-All stacks reached `CREATE_COMPLETE`; all runtimes and `DEFAULT` endpoints reached version 1 and `READY`.
-None of their deployed environments contains `BEDROCK_ENDPOINT_TYPE`. The three saved connection profiles were replaced from the new outputs.
-
-| Verification | Result |
+| Probe | Purpose |
 | --- | --- |
-| ARM64 images and local checks | Both builds, TypeScript, 21 CDK tests, and 217 Python tests passed. |
-| Interactive E2E on all three profiles | Model reply, runtime-role checks, detach/attachment, context follow-up, real `date` tool, and stop flow passed. |
-| Codex sandbox | Workspace writes, protected metadata, hidden host paths, network isolation, and model-driven `date` passed. |
-| Both OpenCode health probes | Work/busy, question/wait/idle, reply/busy, completion/idle, and process-death cleanup passed. |
-| Shared file persistence | Session A wrote 4 KiB and 8 MiB files; session B read matching hashes. Cleanup removed the probe's files. |
-| Fresh native endpoint calls on both OpenCode profiles | Global Astra through Runtime and GPT-OSS 20B through Mantle passed without an endpoint override. |
-| Same-conversation Kimi to Global Astra | Both OpenCode profiles recalled a label from the first user message. |
-| Continuing that history on Mantle GPT-OSS 20B | Failed with HTTP 400 Responses history-validation errors. Fresh Mantle calls passed. |
-| Codex simple-text switch to Global Astra | Fresh and resumed calls passed. The earlier encrypted-history limitation remains. |
-
-The initial PUBLIC OpenCode attachment test returned a space after `RESUMED:`. The smoke matcher now accepts separator whitespace while still requiring the full expected answer; the rerun passed.
-Six new interactive sessions were opened in three replacement tabs and left connected for the user.
-All returned real date and folder-access results. One Kimi turn ended with no final answer after approximately 132 seconds; a short follow-up succeeded.
-All disposable probe sessions received stop requests, and isolated Herdr servers stopped.
-Final CDK diffs showed no changes. Both Ireland retention settings remained `default`.
-Outputs remain in the matching ignored `.local/deployments/NAME.json` files. Older records and results describe retired runtime instances.
-
-### Dual-endpoint permissions and Ireland retention — 2026-10-19
-
-The user authorized both inference endpoints in each execution role and delegated the Ireland-only retention change to a separate agent.
-That agent changed Ireland Mantle account retention from `none` to `default` with `PutAccountDataRetention` and verified the result.
-Ireland Runtime remained `default`. The managed zero-retention guard remained at version v2 with identical contents, including other-region and logging restrictions.
-
-The shared CDK stack now grants Runtime invocation/streaming, inference-profile discovery, and region/account-project-scoped Mantle inference to all three roles.
-The startup endpoint still selects the native client; it no longer selects the role's inference permissions.
-Each reviewed deployment diff changed only the execution-role policy. All three stacks reached `UPDATE_COMPLETE`.
-Runtime/DEFAULT versions remained 4 for Codex and 1 for both OpenCode profiles; all reported `READY`.
-
-Fresh disposable sessions verified these outcomes:
-
-| Profile | Runtime | Mantle |
-| --- | --- | --- |
-| Codex | Global Astra returned the expected response. | The Astra ID returned model-not-found 404, not an IAM denial. No successful Codex Mantle model turn is claimed for this check. |
-| OpenCode PUBLIC | Global Astra returned the expected response. | GPT-OSS 20B returned the expected response. |
-| OpenCode with S3 Files | Global Astra returned the expected response. | GPT-OSS 20B returned the expected response. |
-
-Ireland's Mantle model list included GPT-OSS 20B but did not include the Astra ID advertised by the native client catalog.
-The role environments contained no static credentials or provider tokens. All disposable probe sessions received stop requests.
-TypeScript and all 21 CDK tests passed, including identical inference IAM for either startup endpoint.
-Final CDK diffs showed no changes for all three profiles. Documentation, package, privacy, and whitespace checks passed.
-These changes remove the endpoint-based IAM restriction. They do not fix Codex's cross-model encrypted-history issue or guarantee every catalog entry exists in Ireland.
-
-### Model-switch diagnosis — 2026-10-19
-
-The user reported failures in the Codex and PUBLIC OpenCode tabs after the six-session test.
-Read-only inspection identified a Mantle/Runtime picker mismatch in one OpenCode pane. The other pane successfully used the Global Astra entry.
-Both Codex panes had accepted model changes but remained in earlier active turns, waiting on Responses streams.
-Their logs showed HTTP 200 followed by `idle timeout waiting for SSE` after 300 seconds and native sampling retries.
-
-| Controlled check | Result |
-| --- | --- |
-| Fresh Codex Astra and Luna conversations | Passed in approximately 1–2 seconds. |
-| Simple Sol text history resumed with Astra or Luna | Passed. |
-| Sol tool history containing encrypted reasoning resumed with Astra or Luna | No completed response within the probe's 55-second bound. |
-| A failed cross-model probe resumed with the original Sol model | Passed in approximately 1 second; saved history was retained. |
-| Direct Runtime Responses request with synthetic Sol reasoning replayed to Sol | Passed in approximately 1 second. |
-| The same synthetic history replayed to Astra | HTTP 200 and `response.created`, then no completed response within 25 seconds. |
-| The Astra request with only the reasoning item omitted | Passed in approximately 1 second. |
-
-The direct API comparison kept synthetic response data in memory. It did not modify a user's history.
-All disposable runtime probe sessions received stop requests. The user's six sessions were not replaced or stopped.
-No image, IAM policy, or retention setting changed during this diagnosis. See the [model-switching procedure](#model-switching-endpoint-and-history-limits).
-
-### All profiles and six interactive sessions — 2026-10-19
-
-Both current ARM64 images built successfully. TypeScript, 21 CDK tests, and all 212 Python tests passed with both image-test flags enabled.
-Official CDK deploy commands completed for all three numbered profiles and reported no changes.
-Codex remained at Runtime/DEFAULT version 4. Both OpenCode runtimes remained at version 1. Each runtime and its `DEFAULT` endpoint reported `READY`.
-Final CDK diffs showed no changes. Ireland Runtime retention read back as `default`.
-
-The connector imported the three current CDK output descriptors under their numbered profile names.
-At the user's request, Herdr opened three tabs with two independent runtime sessions per profile.
-All six assistants executed `date`, reported UID/GID 1000, and completed read-only directory-access checks.
-Their measured times were between `2026-10-19T16:15:06Z` and `2026-10-19T16:15:15Z`.
-
-| Profile | Current directory and observed access |
-| --- | --- |
-| `codex-agentcore-profile-1` | `/home/agent`; home and temporary paths passed write-permission checks. The native tool sandbox exposed read-only system paths and hid `/app`. No S3 Files mount is configured. |
-| `opencode-agentcore-profile-2` | `/home/agent`; home and temporary paths passed write-permission checks. `/app`, `/etc`, and `/usr` were readable but not writable. `/root` was inaccessible. No S3 Files mount is configured. |
-| `opencode-s3filesystem-agentcore-profile-3` | `/mnt/workspace`; the shared mount passed read, traverse, and write-permission checks in both sessions. Home and temporary paths remain runtime-local. |
-
-These interactive checks inspected permissions without testing writes.
-A separate disposable storage probe wrote 4 KiB and 8 MiB files in session A and read matching hashes in session B.
-Its cleanup removed the probe's files and directory. All three storage-probe sessions received stop requests.
-The six user-requested interactive sessions remained connected and available after verification; they were not disposable cleanup targets.
-
-### Sol on native Bedrock Runtime — 2026-10-19
-
-The Codex profile selects `global.openai.gpt-5.6-sol` through native Bedrock Runtime in `eu-west-1`.
-The update replaced version 3's GPT-OSS/Mantle configuration. It changed the image and inference IAM, and removed `CODEX_BEDROCK_BASE_URL`.
-The image uses the native `amazon-bedrock-runtime` provider without the earlier GPT-OSS tool-feature overrides.
-CloudFormation reached `UPDATE_COMPLETE`. The Runtime and `DEFAULT` endpoint reached version 4 and `READY`.
-The final CDK diff showed no changes. Outputs are saved in ignored `.local/deployments/codex-agentcore-profile-1.json`.
-
-Readback before and after deployment confirmed Ireland Runtime retention mode `default`.
-The earlier authorized retention change and Ireland-only guard exception remain separate account administration. This deployment did not change retention controls.
-
-Fresh disposable sessions passed these checks:
-
-1. Native sandbox workspace writes succeeded. Protected metadata writes were blocked. The outside host file stayed unchanged.
-2. Containerd and daemon paths were hidden, and the network probe was isolated.
-3. Sol executed `date` through its shell tool. The headless probe required a successful `command_execution` event.
-4. An isolated Herdr server selected the default connection profile, recognized Codex, and received `HERDR-CLOUD=457` from Sol.
-5. Process inspection found no static AWS credentials or provider tokens.
-6. Detach and attachment preserved the original session. A follow-up returned `RESUMED:HERDR-CLOUD=457`.
-7. The interactive tool call displayed `Ran date` and returned `2026-10-19T16:10:37Z`.
-8. Both probe sessions received stop requests. The isolated Herdr server stopped.
-
-The ARM64 image build and TypeScript check passed. Local tests passed 21 CDK cases and 203 Python cases.
-That Python run enabled both Codex image checks and the isolated Herdr manifest check; nine other opt-in checks were skipped.
-Codex work-health reporting, long-duration behavior, and full credential rollover remain unqualified.
-
-## Historical validation
-
-The following results describe earlier revisions and retired deployment instances.
-Their retention modes, runtime versions, and pending checks do not replace the current validation above.
-
-### GLM 5.3 and storage repair — 2026-10-19
-
-An earlier Codex profile revision selected `global.zai.glm-5.3` through Bedrock Runtime in `eu-west-1`.
-AWS documents Responses support for this model. The account's authorization, entitlement, regional availability, and inference-profile checks passed.
-The CDK update changed only `BEDROCK_MODEL_ID`. The Runtime and `DEFAULT` endpoint reached version 2 and READY.
-A fresh Codex session returned the expected model response. Another session passed the native sandbox checks and a real model-driven `date` tool call.
-No adapter, image, or inference-permission change was needed for GLM 5.3.
-
-Storage used the existing AWS sample-compatible access point. Its missing directory marker caused S3 Files to assign the imported directory default ownership `root:root` and mode `0755`.
-The authorized repair created only the missing zero-byte marker with `file-owner=1000`, `file-group=1000`, and `file-permissions=0040755`, using conditional creation.
-Fresh sessions then reported root ownership `1000:1000`. File write/read checks passed for 4 KiB and 8 MiB files.
-Following the AWS sample's test pattern, session A wrote the files and session B read matching contents after A received a stop request. A cleanup session removed the probe's files and directory.
-The S3 stack stayed at version 1; its image, IAM grants, VPC, access point, and mount configuration did not need changes.
-
-During model research, AWS documentation and account-specific metadata showed that GPT-5/6 models did not allow `none`; GPT-OSS models did.
-At that stage, the user selected GLM 5.3, so that update did not deploy GPT-OSS. A later version 3 used GPT-OSS/Mantle before Sol version 4 replaced it.
-With explicit approval, the separate Ireland Mantle account setting was tightened from `inherit` to `none`.
-Readback confirmed `none` on both Runtime and Mantle. The deployed GLM calls used Runtime with `none` enforced.
-
-Local checks passed 21 CDK tests and 212 Python tests. Final Codex and filesystem CDK diffs showed no changes.
-All owned model, sandbox, and persistence-test sessions received stop requests. The earlier failure evidence below is retained as history.
-
-### Numbered profile deployments — 2026-10-19
-
-All three numbered profiles deployed through official CDK in `eu-west-1`.
-Each stack reached `CREATE_COMPLETE`. Each Runtime and `DEFAULT` endpoint reached version 1 and `READY`.
-The Runtime names use underscores because AgentCore rejects hyphens. Profile filenames retain their numbered hyphenated names.
-Final CDK diffs showed no differences. Connection outputs are in the matching `.local/deployments/NAME.json` files.
-
-| Profile | Cloud smoke result |
-| --- | --- |
-| `codex-agentcore-profile-1` | Healthy startup and Codex 0.163.0 verified. Sol inference was rejected by account retention mode `none`. |
-| `opencode-agentcore-profile-2` | Healthy startup, OpenCode 1.18.30, and a real Kimi K3 response passed. |
-| `opencode-s3filesystem-agentcore-profile-3` | Healthy startup, required mount, and a real Kimi K3 response passed. Directory creation failed on the mounted root's POSIX permissions. |
-
-No static credential snapshots were present in the prepared launcher environments.
-All four isolated smoke-test sessions received stop requests. Filesystem tests could not create their temporary directory, so file write/read qualification was not reached.
-The account retention setting was re-read as `none`; it was not changed.
-AWS reported no custom application tags on any of the three runtimes. Their deployed environment contains no `OPENCODE_CONFIG` or `OPENCODE_CONFIG_CONTENT` entry.
-That earlier OpenCode launcher created a process-local SDK-selection overlay. The current model-only profiles use native catalog routing without that overlay.
-
-Local checks passed 21 CDK tests and 212 Python tests, including both image checks.
-CDK built/published the two assistant images; both OpenCode deployments use the same image asset.
-An initial concurrent Docker login caused a local keychain collision for Codex. A sequential retry succeeded without changing credential configuration.
-
-### Old deployments retired — 2026-10-19
-
-The user authorized removal of `HerdrCodexRuntime`, `HerdrOpenCodeRuntime`, `HerdrEuKimiK3Runtime`, and `HerdrEuGpt56SolRuntime` in `eu-west-1`.
-Four known session stop requests succeeded. Two older sessions were already absent.
-Official CDK destroy commands used the saved cloud assemblies, without applying the edited replacement profiles.
-All four stacks reached `DELETE_COMPLETE`. Direct AgentCore and IAM reads confirmed that their runtimes and execution roles were absent.
-Shared VPC, S3 Files, and CDK bootstrap/asset resources were preserved. The unrelated runtimes remained READY.
-Saved outputs for those deployment instances are historical records. The numbered replacements are described above.
-The results below describe earlier revisions.
-
-The configuration review passed 20 CDK tests, 212 Python tests with both existing ARM64 images, and synthesis of all three profiles.
-Tests verify file-only bindings, rejected context overrides, profile-controlled regions/names/models, stable logical IDs, and IAM-policy dependencies.
-The filesystem template has access-point permissions and no direct-S3 grants, bucket lookup, or Lambda function.
-Those were local checks. Live file-I/O validation of the access-point-only policy was pending at that stage; the later storage tests passed.
-
-The endpoint-selection revision passed 16 CDK tests, 212 Python tests, and synthesis of all three stacks.
-Both ARM64 images built successfully. Tests cover exact endpoint values, rejected aliases, IAM, and container environment wiring.
-Offline image checks verify OpenCode's resolved SDK for Runtime and Mantle, Codex CLI startup, and shared health behavior.
-Codex provider arguments and Runtime web-search settings had adapter coverage. That revision had not yet received new cloud inference qualification.
-
-The earlier field cleanup passed 14 CDK tests, 190 Python tests, and synthesis of all three stacks.
-Both updated ARM64 images built successfully. Native CLI checks verified shared Kimi registration and independent inference-region configuration.
-The later access-point-only revision removed that bucket lookup. File-I/O qualification followed in the storage tests recorded above.
-The field audit is recorded above; duplicate/unused input fields are rejected rather than silently ignored.
-
-The repo-local configuration migration passed 14 CDK tests and 189 Python tests.
-All three profiles synthesized from repo-local env bindings without external profile-directory arguments.
-Tests cover missing env values, CSV bindings, account/region validation, rejected external profile directories, and Git/image exclusion of local env files.
-This configuration-source change was validated by synthesis and offline checks.
-
-### Earlier profile-named VPC deployments
-
-Earlier profile revisions deployed `HerdrEuKimiK3Runtime` and `HerdrEuGpt56SolRuntime`.
-These results predate the current three-sample schema and access-point-only permissions. Renaming a source profile does not migrate an existing stack.
-Both used the same verified, existing VPC and S3 Files access point. Local bindings used `src/agentcore_runtime/.env`; outputs were stored under ignored `.local/deployments/`.
-Both Runtime/DEFAULT endpoints reached version 1 and READY. Final CDK diffs showed no changes.
-The examples in Git contain env references, with a tracked `.sample.env` template.
-
-| Check | Kimi K3 | GPT-5.6 Sol |
-| --- | --- | --- |
-| CDK deployment and OpenCode startup | Passed. | Passed. |
-| Required mount and `/mnt/workspace` working directory | Passed. | Passed. |
-| Real model response | Passed. | Rejected by the account's `none` retention policy. |
-| Detach, attachment, and conversation follow-up | Passed. | Not reached. |
-| Shell time command | Returned `2026-10-18T22:46:25Z`. | Not reached; no time answer was produced. |
-| Probe cleanup | Stop request accepted; isolated server stopped. | Stop request accepted; isolated server stopped. |
-
-Kimi's UI showed the actual `date -u '+%Y-%m-%dT%H:%M:%SZ'` tool output and the matching model response.
-This short flow did not reproduce the general Kimi Converse reasoning-history limitation. It does not qualify every tool or conversation shape.
-No shared S3 files were changed by those prompts. File-write testing had not run at that stage; later separate-session tests passed.
-
-Cloud testing exposed missing S3 Files metadata permissions. The stack now separates metadata reads from mount/write grants.
-The initial temporary-name stack and the superseded Astra stack were removed. Those two profile-named deployments were later retired before the numbered replacements were created.
-The attempted retention update was denied; the account stayed at `none`. The user required that setting at that stage.
-The later Ireland-only authorization changed Runtime retention to `default`; see the current model and retention section above.
-That earlier final control-plane check confirmed `none`, identical network/filesystem bindings, and removal of the superseded Astra runtime.
-Both a minimal Sol request and its Herdr E2E attempt failed on that policy. Do not interpret an `ACTIVE` model profile or READY Runtime as successful inference.
-
-### Local and earlier validation
-
-The `agent_images/`, `provision_profiles/`, and `cdk/` layout passed 189 Python tests with both rebuilt ARM64 images and ten CDK tests.
-The checks cover model registration in the pinned OpenCode CLI, mount readiness, VPC/S3 template wiring, profile defaults, and shared image assets.
-Kimi passed a deployed VPC/S3 Files and Herdr E2E flow with private, populated resource bindings. Checked-in bindings remain unpopulated templates.
-GPT-5.6 Sol inference was blocked by the regional retention policy at that stage. An earlier Astra deployment reached READY but failed inference for the same reason.
-
-The flat adapter layout built both ARM64 images and passed 184 Python tests with both image flags.
-Six CDK tests, TypeScript checks, package checks, and documentation checks passed.
-These are local checks of the directory change. The cloud results below describe the earlier deployed images.
-
-The shared-image refactor passed 180 Python tests with both newly built ARM64 images, six CDK tests, and TypeScript checking.
-The image tests cover shared HTTP health for both adapters, native CLI startup, OpenCode work transitions, and process-death cleanup.
-CDK tests confirm that the staged asset contains shared files and the selected adapter only.
-The refactored images were then deployed through CDK to separate disposable runtimes in `eu-west-1`.
-Codex used the profile's declared Mantle inference region, `us-east-2`.
-
-### Cloud E2E results for the shared images
-
-| Check | OpenCode | Codex |
-| --- | --- | --- |
-| CDK deploy and runtime startup | Passed. | Passed. |
-| Herdr new-agent action and native recognition | Passed in an isolated server. | Passed in an isolated server. |
-| Real model turn through `agent prompt --wait` | Passed; generated the expected arithmetic response. | Passed; generated the expected arithmetic response. |
-| Process credential inspection | No static AWS keys or provider tokens. | No static AWS keys or provider tokens. |
-| Detach and original-session attachment | Passed without a second connection record. | Passed without a second connection record. |
-| Follow-up conversation continuity | Passed after attachment. | Passed after attachment. |
-| Explicit plugin stop action | Request accepted. | Request accepted. |
-| Work/question/reply/completion health | Passed against the deployed `/ping` service. | No work-event reporter is implemented. |
-| Process-death health cleanup | Passed. | Not qualified as work tracking. |
-
-The initial model prompts prohibited tool use and file changes. Those tests did not qualify sandbox execution or the full approval/keyboard matrix.
-Codex also completed a supplemental non-interactive model request with stdin closed.
-
-Codex displayed two startup warnings. Inspection found a missing system `bubblewrap` executable, with a reported bundled fallback, and embedded mode selected by command-line configuration overrides.
-Those warnings did not block the tested model/attachment flow. The later sandbox checks are recorded below.
-The warning panel opened with the raw `CSI 12~` sequence; the logical F2 probe did not open it. Full function-key compatibility remains unverified.
-
-All probes requested stop for their own sessions and stopped their isolated Herdr servers.
-Both temporary stacks were destroyed, and control-plane lookups confirmed that both test runtimes no longer exist.
-The OpenCode stack's first deletion timed out in the CloudFormation resource handler. After confirming the runtime was already absent, a second `cdk destroy` completed.
-Shared CDK asset storage remains under its normal retention policy. The existing default deployment stayed READY; the temporary test deployments were not promoted to it.
-
-### Persistent deployments after qualification
-
-After committing the implementation, both named profiles were deployed as persistent CDK stacks in `eu-west-1`.
-The OpenCode runtime and DEFAULT endpoint reached version 2 and READY. Codex reached version 1 and READY.
-That Codex revision used its declared `us-east-2` Mantle inference endpoint. Those deployment instances were later retired; the numbered Codex replacement now uses native Runtime in Ireland.
-Herdr was reinstalled and relinked to the committed connector, then registered `opencode-agentcore-runtime` and `codex-agentcore-runtime` from CDK outputs.
-OpenCode remained the default connection profile at that stage. Later numbered imports preserve an existing default until it is explicitly changed.
-
-Fresh sessions on both persistent deployments passed real model calls, native recognition, credential inspection, detach/attachment, conversation continuity, and stop requests.
-OpenCode also passed work/question/reply and process-death health checks on the persistent deployment.
-The probes stopped only their disposable sessions and isolated Herdr servers. Those two deployments stayed available until their later authorized retirement.
-
-### Codex sandbox fix qualification
-
-After the initial deployment, interactive `date` requests reproduced the containerd-alias sandbox failure.
-The native permission preset fixed that failure while retaining sandbox restrictions.
-The new image passed the following checks on a disposable runtime and on the persistent Codex deployment:
-
-| Check | Result |
-| --- | --- |
-| Native sandbox loads the image-installed preset | Passed; configuration mode is `0600`. |
-| Workspace file write | Passed. |
-| `.git/config` write | Denied. |
-| File outside the workspace | Hidden inside the sandbox; host contents remained unchanged after a write attempt. |
-| containerd and Codex daemon paths | Not accessible. |
-| Network probe | Blocked. |
-| Real model shell tool | A completed `command_execution` event ran `date` successfully. |
-| Herdr interactive tool after detach/attachment | Passed on the persistent deployment; the UI showed `Ran date` and its UTC output. |
-
-The persistent Codex runtime and DEFAULT endpoint reached version 2 and READY.
-The deployment diff changed only the Codex container image. OpenCode was not redeployed.
-The new image also passed model/role/recognition, attachment, conversation continuity, and stop checks in isolated Herdr servers.
-All probe session stop requests were accepted. The isolated servers were stopped, and the disposable sandbox-test stack was destroyed.
-Existing user sessions were not replaced; they need a new runtime session to use the updated image.
-
-Local validation passed 184 Python tests with both image flags, six CDK tests, and TypeScript checks.
-This qualifies the tested command and isolation cases. It does not qualify every tool, approval dialog, or long-running workload.
-
-### Earlier deployed baseline
-
-The `opencode` settings were deployed through official CDK in place of the old custom-managed runtime.
-The runtime and default endpoint reached READY. The updated connector imported the resolved CDK outputs.
-Fresh cloud probes passed model/role checks, work/question/reply health, process-death cleanup, attachment, and conversation continuity.
-The probes stopped their own sessions and isolated Herdr server.
-CDK assertions and synthesis cover the `codex` example. Later shared-image cloud evidence is recorded above.
-That baseline passed 174 Python tests, five CDK assertions, and a no-change CDK diff before the shared-image refactor.
-Those cloud results predate the shared-image refactor. Do not treat them as a deployment of the new common image files.
-
-## Updates and cleanup
-
-Use the same profile, stack, account, and region for `cdk diff` and `cdk deploy`.
-The sample inference policy does not restrict model IDs. Existing sessions can select other available models without a retained-model list.
-CDK does not inspect and merge arbitrary existing IAM policies. Review changes to invocation actions, role trust, and storage access before applying them.
-
-Stop the selected deployment's sessions before destruction:
-
-```bash
-npm --prefix src/agentcore_runtime/cdk run cdk -- destroy HerdrOpenCodeS3FilesystemRuntime \
-  -c runtimeProfile=opencode-s3filesystem-agentcore-profile-3
-```
-
-CDK bootstrap repositories and their asset retention are separate from runtime-stack destruction.
-Do not delete a shared asset repository as part of a runtime teardown.
-
-## References
-
-- [AWS CDK application and construct best practices](https://docs.aws.amazon.com/cdk/v2/guide/best-practices.html).
-- [AgentCore filesystem configuration and VPC requirements](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-filesystem-configurations.html).
-- [S3 Files backing-bucket permissions](https://docs.aws.amazon.com/AmazonS3/latest/userguide/s3-files-prereq-policies.html).
-- [Kimi K3 model, regions, and Converse limits](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-moonshot-ai-kimi-k3.html).
-- [GPT-5.6 Sol model and regions](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-56-sol.html).
-- [GLM 5.3 APIs, regions, and reasoning settings](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-zai-glm-5-3.html).
-- [GPT-OSS 120B endpoints and APIs](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-oss-120b.html).
-- [Bedrock regional data-retention controls](https://docs.aws.amazon.com/bedrock/latest/userguide/data-retention.html).
-- [Official AgentCore CDK resource](https://docs.aws.amazon.com/cdk/api/v2/docs/aws-cdk-lib.aws_bedrockagentcore.CfnRuntime.html).
-- [Official Docker image assets](https://docs.aws.amazon.com/cdk/api/v2/docs/aws-cdk-lib.aws_ecr_assets.DockerImageAsset.html).
-- [CDK bootstrapping](https://docs.aws.amazon.com/cdk/v2/guide/bootstrapping-env.html).
-- [AWS Codex sample collection](https://github.com/awslabs/agentcore-samples/tree/main/01-features/02-host-your-agent/01-runtime/04-coding-agents/03-code-agents-competition-e2e/coding_agents).
-- [Codex with Amazon Bedrock](https://developers.openai.com/codex/amazon-bedrock).
-- [Pinned Codex Runtime endpoint and AWS signing](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/model-provider/src/amazon_bedrock/runtime.rs).
-- [Pinned Codex Responses request construction and encrypted reasoning replay](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/core/src/client.rs).
-- [Pinned OpenCode native Runtime and Mantle providers](https://github.com/anomalyco/opencode/blob/v1.18.30/packages/opencode/src/provider/provider.ts).
-- [Pinned Codex permission-profile compiler](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/core/src/config/permissions.rs).
-- [Pinned Codex daemon mount masking](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/linux-sandbox/src/daemon_mounts.rs).
-- [Herdr 0.9.5 status detection](https://herdr.dev/docs/0.9.5/agents/#how-status-works).
-- [Herdr integration behavior](https://herdr.dev/docs/0.9.5/integrations/).
-- [Pinned Codex detection rules](https://github.com/herdrdev/herdr/blob/v0.9.5/src/detect/manifests/codex.toml).
-- [Pinned OpenCode detection rules](https://github.com/herdrdev/herdr/blob/v0.9.5/src/detect/manifests/opencode.toml).
-- [Connection contract](../runtime_contract/README.md) and [ASD-STE100-style writing rules](../../agent.md#documentation-style-asd-ste100-style-english).
+| `tests/live_runtime_tools.py` | Development tools, native CLI commands, and generic MCP reconstruction. |
+| `tests/live_runtime_activity.py` | OpenCode busy/wait/idle and process-death health behavior. |
+| `tests/live_codex_sandbox.py` | Native sandbox restrictions and a model-driven command. |
+| `tests/live_profile_storage.py` | Empty-root mount and cross-session file persistence. |
+
+Do not run the empty-root storage probe against a workspace that contains user data.
+Use each probe's `--help` for required parameters.
+Herdr end-to-end attachment tests remain in the independent plugin repository.
+
+See [the repository guide](../../README.md), [design](../../docs/DESIGN.md), and [requirements](../../docs/REQUIREMENTS.md).

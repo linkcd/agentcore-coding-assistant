@@ -2,7 +2,7 @@ import { ArnFormat, CfnOutput, Stack, StackProps, Tags, aws_bedrockagentcore as 
   aws_ecr_assets as assets, aws_iam as iam, aws_s3files as s3files } from "aws-cdk-lib";
 import { Construct } from "constructs";
 import * as path from "node:path";
-import { connectionDescriptor, validateCommand } from "../../runtime_contract/connection";
+import { connectionDescriptor, validateCommand } from "./connection";
 import { REPOSITORY_ROOT, RuntimeProfile } from "./profile";
 import { AgentImage, IMAGE_DIRECTORY } from "./image";
 import { RuntimeInfrastructure } from "./infrastructure-stack";
@@ -25,7 +25,6 @@ export class RuntimeStack extends Stack {
       env: { account: props.account, region: props.profile.region } });
     const definition = props.imageDefinition;
     const command = validateCommand(props.profile.command === undefined ? definition.command : props.profile.command);
-    const agentKind = props.profile.agentKind === undefined ? definition.agentKind : props.profile.agentKind;
     const { runtimeName } = props.profile;
     const { modelId } = props.profile.inference;
 
@@ -166,8 +165,7 @@ export class RuntimeStack extends Stack {
     new CfnOutput(this, "RuntimeId", { value: runtime.attrAgentRuntimeId });
     new CfnOutput(this, "ConnectionDescriptor", {
       value: this.toJsonString(connectionDescriptor({
-        runtime_arn: runtime.attrAgentRuntimeArn, region: this.region, endpoint: "DEFAULT",
-        command, agent_kind: agentKind, runtime_profile: props.profileName,
+        runtime_arn: runtime.attrAgentRuntimeArn, command,
       })),
     });
   }

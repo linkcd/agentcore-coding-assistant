@@ -1,26 +1,27 @@
 [project]
-name = "herdr-agentcore-workspace"
+name = "agentcore-coding-runtimes"
 version = "0.1.0"
-description = "Workspace for independent AgentCore runtimes, a Herdr connector, and their contract"
+description = "Independent AgentCore coding runtime images, CDK deployment, and verification"
 requires-python = ">=3.11"
-dependencies = ["herdr-agentcore==0.1.0"]
+dependencies = []
 
 [tool.uv]
 package = false
 
-[tool.uv.workspace]
-members = ["src/herdr_plugin", "src/runtime_contract"]
-
-[tool.uv.sources]
-herdr-agentcore = { workspace = true }
-
 [dependency-groups]
-dev = ["pytest>=8.4,<10", "pytest-asyncio>=1,<2", "ruff>=0.12,<1"]
+dev = [
+  "bedrock-agentcore==1.24.1",
+  "pytest>=8.4,<10",
+  "pytest-asyncio>=1,<2",
+  "ruff>=0.12,<1",
+  "jsonschema>=4.23,<5",
+]
 
 [tool.pytest.ini_options]
-testpaths = ["src/runtime_contract/tests", "src/herdr_plugin/tests", "src/agentcore_runtime/tests"]
+testpaths = ["src/agentcore_runtime/tests"]
 asyncio_mode = "auto"
-pythonpath = ["src"]
+pythonpath = ["src", "src/agentcore_runtime/tests", "scripts"]
+asyncio_default_fixture_loop_scope = "function"
 
 [tool.ruff]
 target-version = "py311"

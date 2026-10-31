@@ -4,8 +4,8 @@ import uuid
 from unittest.mock import Mock
 
 import pytest
-from agentcore_contract import UserError
 from live_runtime_activity import run
+from runtime_connection import UserError
 
 ARN = "arn:aws:bedrock-agentcore:us-west-2:123456789012:runtime/test_runtime-Abc123"
 

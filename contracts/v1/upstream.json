@@ -1,0 +1,10 @@
+{
+  "owner": "herdr-to-agentcore",
+  "source_path": "contracts/v1",
+  "source_release": null,
+  "descriptor_version": "1.0.0",
+  "sha256": {
+    "connection.schema.json": "8277f24d7efef04a74c50cc9e2ba9e959d8871937c08f5ba1b69ff133c58e14e",
+    "fixtures.json": "2ba826d33bd9c54206e66f3366ebf5f9ff8d4e9b0ec6c8f8429be08f294529b1"
+  }
+}

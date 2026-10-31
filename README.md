@@ -1,265 +1,121 @@
-# Herdr → AgentCore
+# AgentCore coding runtimes
 
-## Goal
+Build and deploy interactive coding assistants in Amazon Bedrock AgentCore Runtime.
+This repository owns the images, TypeScript CDK infrastructure, storage settings, and runtime verification.
+The Herdr connector is maintained independently in `herdr-to-agentcore`.
 
-Connect Herdr to interactive assistants in Amazon Bedrock AgentCore Runtime.
-Keep terminal connection logic separate from assistant definitions and deployment.
-Herdr owns workspaces, tabs, panes, and live-agent identity.
-The connector uses AWS Identity and Access Management (IAM), not a separate end-user platform.
+The repositories share a versioned JSON data format, not implementation packages.
 
-## Three components
+## Layout
 
 ```text
-src/
-  agentcore_runtime/   Runtime definitions, deployment tools, and tests
-  herdr_plugin/        Herdr connector and tests
-  runtime_contract/    Shared connection data and validation
+src/agentcore_runtime/
+  agent_images/       Shared image support and assistant adapters
+  cdk/                TypeScript CDK and local descriptor producer
+  provision_profiles/ Named deployment settings
+  tests/              Offline checks and opt-in live probes
+contracts/v1/         Checksum-pinned descriptor schema and fixtures
+docs/                 Runtime architecture and storage documentation
 ```
 
-| Component | Purpose | Package |
-| --- | --- | --- |
-| [Runtime infrastructure](src/agentcore_runtime/README.md) | Use AWS CDK to deploy the selected named runtime settings. | Private CDK project |
-| [Herdr connector](src/herdr_plugin/README.md) | Connect terminals and manage saved sessions against existing runtimes. | `herdr-agentcore` |
-| [Connection contract](src/runtime_contract/README.md) | Validate ARN, endpoint, launch arguments, and agent recognition hint. | `agentcore-contract` |
+The image adapters currently provide OpenCode 1.18.30 and Codex 0.163.0.
+Both images include pinned development tools and use native AWS credential providers.
+Conversation state is runtime-local. GitHub credentials are configured separately.
 
-The CDK project and connector use the shared contract. Neither imports the other's implementation.
-Each folder has its own README and tests. The connector and contract are Python packages; infrastructure uses npm/CDK.
-The root is a Python workspace for those two packages. The Herdr manifest remains at the root.
+## Install development dependencies
 
-Agent image sources live in `src/agentcore_runtime/agent_images/`.
-Deployment inputs live in `provision_profiles/`; CDK code and npm configuration live in `cdk/`.
-The three provision profiles are:
-
-| Profile | Startup model | Network |
-| --- | --- | --- |
-| `codex-agentcore-profile-1` | GPT-5.6 Sol through Codex | PUBLIC |
-| `opencode-agentcore-profile-2` | Kimi K3 through OpenCode | PUBLIC |
-| `opencode-s3filesystem-agentcore-profile-3` | Kimi K3 through OpenCode | VPC and S3 Files |
-
-Each profile references one shared image definition rather than repeating build and startup settings.
-Deployment bindings are read from ignored `src/agentcore_runtime/.env`; the adjacent `.sample.env` is the tracked template.
-See the [AgentCore Runtime README](src/agentcore_runtime/README.md#step-3-select-a-sample-profile) for all three samples, their setup, and deployment commands.
-These names point to configuration; they are not hardcoded assistant types in the connector.
-Add other profiles without changing terminal transport. A profile's Herdr recognition hint can differ from its name.
-The examples share image build, startup, and health code. Their adapters and genuine capability differences are described in the [runtime comparison](src/agentcore_runtime/README.md#opencode-and-codex-comparison).
-A runtime ARN identifies the target, but does not prove it has an interactive assistant.
-The runtime must provide a valid launch command and meet AgentCore's service requirements.
-It does not need Herdr installed inside it.
-
-## Connect to a provisioned runtime
-
-Use macOS or Linux, Python 3.11+, uv, and Herdr 0.9.5+.
-Authorize the management host for the selected runtime.
-Docker and deployment permissions are not needed to use an existing runtime.
-For prerequisites, registration, verification, and troubleshooting, follow the [existing-runtime guide](docs/CONNECT_EXISTING_RUNTIME.md).
-
-1. Install the connector:
-
-   ```bash
-   uv sync --frozen --no-dev
-   ```
-
-2. Link the plugin:
-
-   ```bash
-   herdr plugin link "$PWD"
-   ```
-
-3. Import the current OpenCode deployment outputs:
-
-   ```bash
-   .venv/bin/herdr-agentcore configure \
-     --cdk-outputs .local/deployments/opencode-agentcore-profile-2.json \
-     --stack HerdrOpenCodeRuntime \
-     --profile opencode-agentcore-profile-2 \
-     --config-dir "$(herdr plugin config-dir agentcore)"
-   ```
-
-4. Select it as the default:
-
-   ```bash
-   .venv/bin/herdr-agentcore set-default opencode-agentcore-profile-2 \
-     --config-dir "$(herdr plugin config-dir agentcore)"
-   ```
-
-5. Open an agent:
-
-   ```bash
-   herdr plugin action invoke agentcore.new
-   ```
-
-If a runtime owner supplies a standalone descriptor, use `--connection-file PATH` instead of `--cdk-outputs` and `--stack`.
-CDK writes its standard outputs document; it does not create a separate `.connection.json` file.
-You can also configure an ARN directly:
-
-```bash
-.venv/bin/herdr-agentcore configure \
-  --runtime-arn "$RUNTIME_ARN" --agent-kind opencode \
-  --runtime-profile opencode-agentcore-profile-2 \
-  --profile opencode-agentcore-profile-2 \
-  --config-dir "$(herdr plugin config-dir agentcore)" \
-  --command /app/run.sh
-```
-
-Set `RUNTIME_ARN` to a deployed runtime ARN. Put `--command` last.
-Use `--aws-profile` only to select host-local credentials. Omit it for the normal AWS credential chain.
-Add `--replace` to replace an existing profile.
-For an ordinary terminal, omit `--agent-kind` during ARN registration or use `--agent-kind terminal`.
-A recognition hint requires support for that assistant in Herdr; it does not add support by itself.
-
-## Deploy a named runtime profile with AWS CDK
-
-The runtime component contains CDK constructs, named settings, and Docker contexts.
-AWS CDK builds/publishes assets and deploys CloudFormation. The stack exports a connection descriptor without writing Herdr configuration.
-
-```bash
-npm ci --prefix src/agentcore_runtime/cdk
-npm --prefix src/agentcore_runtime/cdk run cdk -- synth \
-  -c runtimeProfile=opencode-agentcore-profile-2
-```
-
-This command needs a local Docker engine, Buildx/ARM64 support, and AWS deployment permissions.
-Use `cdk synth` to inspect templates and `cdk diff` to review changes before deployment.
-The target account/region needs CDK bootstrap resources. Follow the [runtime README](src/agentcore_runtime/README.md) to fill resource bindings, review, deploy, and register each project.
-All Runtime regions are `eu-west-1`. The filesystem example reads its infrastructure settings from `src/agentcore_runtime/.env`.
-TypeScript CDK manages the S3 Files filesystem, service role, and mount targets. The selected S3 profile owns a dedicated access point.
-The VPC, subnets, security groups, and bucket are external. Supply the existing subnet/security-group IDs, bucket, and access-point directory settings in `.env`.
-The filesystem uses the bucket root. Each profile's access point selects `agent-filesystem/profiles/<profile-name>/`, presented directly at `/mnt/workspace`.
-The storage stack name belongs to `s3Files.storageStackName` in the provision profile, not `.env`. Access-point ARNs are generated outputs.
-CDK resolves the account through the authenticated Toolkit. Worker roles retain access-point-scoped permissions without direct bucket access or a metadata lookup.
-The selected profile and component `.env` control deployment settings. Per-field CDK context overrides and ambient shell binding overrides are rejected or ignored, respectively.
-For the S3 example, copy `src/agentcore_runtime/.sample.env` to `src/agentcore_runtime/.env` if needed and fill its bindings. External profile directories are not supported.
-The sample `inference` objects contain only `modelId`. OpenCode uses its model catalog; the Codex image defaults to its native Runtime provider.
-An optional `inference.bedrock-endpoint-type` override remains available for advanced startup routing.
-Each execution role permits both Runtime and Mantle inference, independent of that startup choice.
-Both startup models use global cross-Region inference from Ireland.
-Earlier Sol requests were rejected by zero-retention policy. The user later authorized an Ireland-only guard exception and set both Runtime and Mantle retention there to `default`.
-Profile deployment itself does not change retention settings.
-Import each stack's output with `herdr-agentcore configure --cdk-outputs PATH --stack STACK_NAME` plus local connection options.
-
-## Select, attach, detach, and stop
-
-New-agent selection uses explicit `--profile`, then `HERDR_AGENTCORE_PROFILE`, then saved `default_profile`.
-The first saved profile becomes default. Later saves preserve it.
-Invalid or ambiguous selection fails without a picker.
-Existing connections retain their target and launch settings.
-Importing the numbered profiles does not retarget an older saved default or existing connection records.
-Use an explicit profile for launch, or select a verified current default with `set-default`.
-
-| Command | Purpose |
-| --- | --- |
-| `.venv/bin/herdr-agentcore action new --profile NAME` | Override the profile for one new agent. |
-| `herdr plugin action invoke agentcore.attach` | Reattach an original live terminal. |
-| `herdr plugin action invoke agentcore.sessions` | Show last-known records. |
-| `herdr plugin action invoke agentcore.stop` | Confirm a whole-runtime-session stop request. |
-
-Detach with Ctrl+] followed by `d`.
-Attachment preserves the original runtime session, shell, process, and conversation while they survive.
-It does not replay the launch or uncertain input.
-Stop affects the whole runtime session. The local `stopped` label records acceptance, not confirmed completion.
-
-## Explicit launch contract
-
-Profiles have not been released as a public versioned API. Internal version fields are not a backward-compatibility promise.
-Every connection must contain explicit launch argv. Missing `command` fails validation.
-The connector does not supply `/app/run.sh` or infer OpenCode from the command or ARN.
-Missing `agent_kind` selects an ordinary terminal.
-
-The selected image definitions declare `["/app/run.sh"]` as their current command. A provision profile can override it explicitly.
-In the supplied images, `run.sh` executes the selected image's `run.py`, which starts OpenCode or Codex.
-See the [launcher source map](src/agentcore_runtime/README.md#shared-image-structure) for the corresponding repository files.
-Set `command: ["/custom/start"]` in the selected provision profile to replace the image's default argv.
-The connector can also override a valid descriptor's command explicitly.
-See [command selection](src/agentcore_runtime/README.md#launch-command-selection) for examples and limits.
-
-Deployment uses the official `cdk deploy` command; there is no custom runtime provisioning executable.
-The connector imports the resolved CDK output or an explicit connection descriptor.
-See the [contract README](src/runtime_contract/README.md) for fields and version rules.
-
-## Status and limits
-
-**Current deployment state — 2026-10-20:** the reviewed version is deployed after the superseded runtime/storage stacks were removed.
-All three runtime stacks, `HerdrAgentStorage`, and the separately authorized `HerdrNetworkEgress` stack are `CREATE_COMPLETE`.
-Every runtime and `DEFAULT` endpoint is version 1 and `READY`. The three saved Herdr profiles point to the new runtime ARNs.
-The S3 profile now mounts and works directly at `/mnt/workspace`. Its access point is rooted at `/agent-filesystem/profiles/opencode-s3filesystem-agentcore-profile-3`.
-The latest fresh deployment removed and recreated all three runtime stacks and storage, retaining the external network and S3 data.
-Both ARM64 image builds, 236 Python tests, and 29 CDK tests passed. Six fresh user sessions passed real model/time/directory checks, and cross-session S3 persistence passed.
-Fresh-session storage checks and two profile-configuration directories under one access point passed. All test files and disposable sessions were cleaned up or received stop requests.
-Internet egress remains available through the retained network stack. The storage/runtime stacks still do not own the VPC or subnets.
-The earlier deployment and teardown results below are historical evidence.
-
-The latest verification was on 2026-10-20.
-The repository now manages the sample infrastructure with TypeScript CDK and creates a dedicated access point per S3 profile.
-The S3 runtime is at version 5; the other two runtimes remain at version 4. Both storage-related stacks reached `UPDATE_COMPLETE` with all original infrastructure identities preserved.
-The new S3 profile root starts empty. Two fresh sessions verified mount access, non-root file persistence, cleanup, and absence of inherited MCP configuration.
-See [managed storage setup](src/agentcore_runtime/README.md#profile-specific-access-points) and [adoption results](src/agentcore_runtime/README.md#managed-infrastructure-and-profile-storage--2026-10-20).
-All three numbered profiles run in `eu-west-1`. After the coding-tool image update, every Runtime/DEFAULT endpoint reached version 4 and READY.
-These are AWS runtime versions, not assistant package or descriptor versions.
-The images include pinned Python 3.15/3.13, Node LTS, uv/uvx, pnpm, Go, Rust, GitHub CLI, AWS CLI, and common build tools.
-The shared launcher sets tool paths and local cache defaults. Generic `agentcore-mcp` support rebuilds locked dependencies from an explicit persistent tool project.
-No particular MCP server is a production default.
-Both ARM64 images, 230 Python tests, and 22 CDK tests passed. Fresh cloud sessions passed native builds, generic MCP calls, and S3 cross-session MCP reconstruction.
-See the [tool inventory and setup](src/agentcore_runtime/README.md#coding-tools-and-mcp-environments) and [deployment verification](src/agentcore_runtime/README.md#coding-tools-and-generic-mcp-deployment--2026-10-20).
-Codex with GPT-5.6 Sol passed native Bedrock Runtime inference, sandbox checks, attachment, a context-preserving follow-up, and a real shell-tool call. Ireland Runtime retention is `default`.
-Both OpenCode profiles passed real Kimi model calls.
-The filesystem permission issue is fixed using AWS's documented directory-marker metadata procedure. Separate sessions wrote and read 4 KiB and 8 MiB files successfully.
-The rebuilt model-only profiles passed core interactive E2E checks, both OpenCode health probes, and cross-session storage tests.
-Two fresh interactive sessions per profile returned real date and folder-access results and were left connected. Final CDK diffs showed no changes.
-The later `run.sh` → `run.py` deployment passed fresh-session checks on all three profiles, including source-content checks for the launcher and root legal files.
-See the [latest deployment and E2E results](src/agentcore_runtime/README.md#launcher-deployment-and-e2e--2026-10-19), including test scope and remaining limits.
-
-Version `0.1.0` is experimental. Images pin OpenCode 1.18.30 and Codex 0.163.0; the connector pins AgentCore SDK 1.24.1.
-Herdr 0.9.5 validated all three profiles. Their descriptors were imported under their numbered profile names.
-Six user-requested sessions were left open after the latest checks. They remain subject to the runtime lifecycle limits; discover live state before further operations.
-The older custom-managed and pre-numbered deployments were retired. Their output files and test results are historical records.
-
-All profiles use a 900-second idle timeout and a 28,800-second compute maximum.
-The PUBLIC profiles use ephemeral coding files. The filesystem profile mounts its own persistent root at `/mnt/workspace`; its home and conversation state remain ephemeral.
-Sessions of the same provision profile share its directory. Each S3-backed profile has its own dedicated access point and scoped IAM permissions.
-OpenCode's tracked work produces `HealthyBusy`. An unanswered question can be idle when no other tracked work runs.
-Earlier cloud activity tests and current local image tests cover that bridge. Codex has readiness health only; its work-event reporter is not implemented.
-OpenCode's picker routes model entries through Runtime or Mantle. Both routes are now included in the execution-role policy; account and model-specific requirements still apply.
-Codex can stall when it replays encrypted reasoning across models. Use a fresh conversation for another model, or retain the original model for that history.
-An OpenCode Kimi-to-Astra conversation switch passed, but continuing that mixed history on Mantle GPT-OSS returned a Responses validation error. Fresh endpoint calls passed.
-See the [verified diagnosis and recovery steps](src/agentcore_runtime/README.md#model-switching-endpoint-and-history-limits).
-Health reporting does not extend the maximum lifetime or preserve files.
-Full-duration expiry and credential-rollover tests remain pending.
-
-OpenCode 1.18.30/Bun 1.3.14 crashed at 35×20 in a controlled probe.
-Larger/zoomed panes are a workaround; the complete safe-size boundary is unknown.
-Ctrl+Z can suspend OpenCode. A live connector and screen-derived idle badge do not prove process health.
-
-S3 Files mount readiness, the mounted working directory, and cross-session file persistence passed on the filesystem profile.
-Per-binding storage paths, persistent home/configuration, skill discovery, and conversation checkpoints remain planned or unqualified.
-Automatic resume, multiple helper shells, EC2 management deployment, and host recovery remain planned.
-The hosting target is **EC2 management/coordination → AgentCore workers**, with the laptop used for access and viewing.
-Standard SSM access and native Herdr SSH access are separate options. Neither changes connector authentication.
-
-## Documentation and checks
-
-- [Requirements](docs/REQUIREMENTS.md): scope and acceptance criteria.
-- [Connect an existing runtime](docs/CONNECT_EXISTING_RUNTIME.md): step-by-step setup and verification.
-- [Design](docs/DESIGN.md): architecture, glossary, and validation evidence.
-- [Profile storage mapping](docs/STORAGE_MAPPING.md): 1:1 profile/access-point mapping, runtime paths, and access boundaries.
-- [Session proposal](docs/SESSION_MANAGEMENT_PROPOSAL.md): hosting, identity, and durable recovery.
-- [Plugin review](docs/PLUGIN_GUIDELINES_REVIEW.md): Herdr's public extension contract.
-- [Agent instructions](agent.md): repository conventions and ASD-STE100-style writing rules.
-
-All project documentation follows those style rules. Legal notices retain their original wording.
-The project keeps one [LICENSE](LICENSE) and one [NOTICE](NOTICE) at the repository root. Package and image builds include copies from those sources.
-Keep credentials, records, and transcripts out of Git. Keep local deployment bindings in ignored `src/agentcore_runtime/.env` and generated descriptors under ignored `.local/`.
+Use Python 3.11+, uv, Node.js 22+, and npm.
+Docker with ARM64 build support and AWS deployment credentials are required for deployment.
 
 ```bash
 uv sync --frozen
-uv run --frozen ruff check src
-uv run --frozen ruff format --check src
-uv run --frozen pytest -q --tb=short
-uv run --frozen python src/herdr_plugin/tests/repository_privacy.py
-uv build --all-packages
-uv run --frozen python src/runtime_contract/tests/check_distributions.py --dist dist
-npm run check --prefix src/agentcore_runtime/cdk
-npm test --prefix src/agentcore_runtime/cdk
+npm ci --prefix src/agentcore_runtime/cdk
 ```
 
-Default tests make no AWS calls. Live probes require a selected runtime and authorization.
-The privacy guard checks working files, the index, and history without printing matched values.
+The Python environment contains verification tools only.
+It does not install the Herdr plugin or a shared contract package.
+
+## Deployment profiles
+
+| Profile | Assistant | Network and storage |
+| --- | --- | --- |
+| `codex-agentcore-profile-1` | Codex / GPT-5.6 Sol | PUBLIC; ephemeral home |
+| `opencode-agentcore-profile-2` | OpenCode / Kimi K3 | PUBLIC; ephemeral home |
+| `opencode-s3filesystem-agentcore-profile-3` | OpenCode / Kimi K3 | Existing VPC; S3 Files at `/mnt/workspace` |
+
+For S3 storage, fill ignored `src/agentcore_runtime/.env` from the adjacent `.sample.env`.
+Supply only the existing bucket name, subnet IDs, and security-group IDs.
+The storage stack creates an S3 Files filesystem and mount targets on that external network.
+Each S3-backed runtime profile creates a dedicated access point.
+See [storage mapping](docs/STORAGE_MAPPING.md).
+
+```bash
+npm --prefix src/agentcore_runtime/cdk run cdk -- synth \
+  -c runtimeProfile=opencode-agentcore-profile-2
+npm --prefix src/agentcore_runtime/cdk run cdk -- diff \
+  -c runtimeProfile=opencode-agentcore-profile-2
+```
+
+Deploy only after reviewing the diff:
+
+```bash
+npm --prefix src/agentcore_runtime/cdk run cdk -- deploy \
+  -c runtimeProfile=opencode-agentcore-profile-2 \
+  --outputs-file "$PWD/.local/deployments/opencode-agentcore-profile-2.json"
+```
+
+Use the appropriate profile for another runtime. An S3 deployment also includes its named storage stack.
+See [the runtime guide](src/agentcore_runtime/README.md) for detailed configuration and validation.
+
+## Connection output
+
+CDK exports `RuntimeArn`, `RuntimeId`, and a JSON string named `ConnectionDescriptor`.
+The descriptor contains required runtime ARN and launch argv, plus an optional endpoint qualifier.
+The region is derived by the consumer. Herdr recognition and local profile names are not exported.
+
+The local producer is `src/agentcore_runtime/cdk/connection.ts`.
+It has no import from the plugin repository.
+The pinned [contract](contracts/v1/README.md) supplies conformance data and release provenance.
+
+A connector can import the CDK output or a standalone descriptor.
+For Herdr, configure the local recognition hint separately with `--agent-kind`.
+
+## Export a standalone descriptor
+
+The offline exporter validates a selected CDK output and writes its connection descriptor to a new file:
+
+```bash
+npm --prefix src/agentcore_runtime/cdk run export-connection -- \
+  --cdk-outputs /path/to/outputs.json --stack RuntimeStack \
+  --output /path/to/connection.json
+```
+
+The output path must not already exist. Import the resulting file with the connector's `--connection-file` option.
+Invalid descriptors and unsupported fields are rejected. The input file is not modified.
+
+## Checks
+
+```bash
+uv run --frozen ruff check src scripts
+uv run --frozen ruff format --check src scripts
+uv run --frozen pytest -q --tb=short
+npm run check --prefix src/agentcore_runtime/cdk
+npm test --prefix src/agentcore_runtime/cdk
+uv run --frozen python scripts/check_repository.py
+uv run --frozen python scripts/repository_privacy.py
+git diff --check
+```
+
+Default checks make no AWS calls. Live probes require explicit authorization and use disposable sessions.
+Image changes also require the relevant ARM64 image build and container checks.
+
+## Documentation
+
+- [Runtime guide](src/agentcore_runtime/README.md)
+- [Design](docs/DESIGN.md)
+- [Requirements](docs/REQUIREMENTS.md)
+- [Storage mapping](docs/STORAGE_MAPPING.md)
+- [Pinned connection contract](contracts/v1/README.md)
+- [Contributor instructions](agent.md)
+
+Keep [LICENSE](LICENSE) and [NOTICE](NOTICE) at the repository root and include them in image builds.
