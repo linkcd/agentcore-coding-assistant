@@ -3,16 +3,17 @@ import test from "node:test";
 import { App, Stack, aws_ec2 as ec2 } from "aws-cdk-lib";
 import { Match, Template } from "aws-cdk-lib/assertions";
 import { HerdrHostStack, MODEL_ID, PROFILE_REGIONS } from "../host-stack";
-import { loadHostNetworkConfig } from "../host-config";
+import { loadAgentCoreRuntimeArns, loadHostNetworkConfig } from "../host-config";
 
 const ACCOUNT = "123456789012";
 const VPC_ID = "vpc-" + "0".repeat(8);
 const PUBLIC_SUBNET = "subnet-" + "1".repeat(8);
 const PRIVATE_SUBNET = "subnet-" + "2".repeat(8);
 const ISOLATED_SUBNET = "subnet-" + "3".repeat(8);
+const RUNTIME_ARN = `arn:aws:bedrock-agentcore:eu-west-1:${ACCOUNT}:runtime/example_runtime_1-abcdefghij`;
 
 // A VPC lookup needs AWS credentials, so tests import a synthetic VPC with the same shape.
-function build(props: { volumeSizeGiB?: number; subnetId?: string } = {}, context: Record<string, string> = {}) {
+function build(props: { volumeSizeGiB?: number; subnetId?: string; agentCoreRuntimeArns?: string[] } = {}, context: Record<string, string> = {}) {
   const app = new App({ context });
   const env = { account: ACCOUNT, region: "eu-west-1" };
   const vpc = ec2.Vpc.fromVpcAttributes(new Stack(app, "Network", { env }), "Vpc", {
@@ -109,6 +110,31 @@ test("Bedrock access is limited to the inference profile and its destination mod
   assert.equal(MODEL_ID, "eu.anthropic.claude-sonnet-5-5");
 });
 
+test("without a runtime ARN the role gets no AgentCore access", () => {
+  const policies = Object.values(synth().findResources("AWS::IAM::Policy"));
+  assert.ok(!JSON.stringify(policies).includes("bedrock-agentcore"));
+});
+
+test("AgentCore access is limited to the shell and stop actions on the runtime and its DEFAULT endpoint", () => {
+  const template = synth({ agentCoreRuntimeArns: [RUNTIME_ARN] });
+  const policy = Object.values(template.findResources("AWS::IAM::Policy"))
+    .find((resource) => (resource.Properties as any).PolicyName === "HerdrAgentCoreRuntimeShell");
+  assert.ok(policy);
+  const statements = (policy.Properties as any).PolicyDocument.Statement;
+  assert.equal(statements.length, 1);
+  assert.deepEqual(statements[0].Action, ["bedrock-agentcore:InvokeAgentRuntimeCommandShell", "bedrock-agentcore:StopRuntimeSession"]);
+  assert.deepEqual(statements[0].Resource, [RUNTIME_ARN, `${RUNTIME_ARN}/runtime-endpoint/DEFAULT`]);
+  assert.equal(statements[0].Effect, "Allow");
+});
+
+test("the runtime ARN setting is optional and must name runtimes", () => {
+  assert.deepEqual(loadAgentCoreRuntimeArns({}), []);
+  assert.deepEqual(loadAgentCoreRuntimeArns({ AGENTCORE_RUNTIME_ARN: "REPLACE_WITH_RUNTIME_ARN" }), []);
+  assert.deepEqual(loadAgentCoreRuntimeArns({ AGENTCORE_RUNTIME_ARN: `${RUNTIME_ARN}, ${RUNTIME_ARN}` }), [RUNTIME_ARN]);
+  assert.throws(() => loadAgentCoreRuntimeArns({ AGENTCORE_RUNTIME_ARN: `${RUNTIME_ARN}/runtime-endpoint/DEFAULT` }), /runtime ARNs/);
+  assert.throws(() => loadAgentCoreRuntimeArns({ AGENTCORE_RUNTIME_ARN: "*" }), /runtime ARNs/);
+});
+
 test("the instance waits for the Bedrock policy", () => {
   const template = synth();
   const [policyId] = Object.keys(template.findResources("AWS::IAM::Policy"));
@@ -130,7 +156,7 @@ test("user data installs Herdr and OpenCode and writes the Bedrock configuration
   for (const expected of [
     "HOST_REGION='eu-west-1'", `HOST_MODEL_ID='${MODEL_ID}'`, "OPENCODE_VERSION='2.2.5'",
     "https://herdr.dev/install.sh", "https://opencode.ai/v2/install", "https://astral.sh/uv/install.sh",
-    "herdr plugin install linkcd/herdr-agentcore", "amazon-ssm-agent", "awscli-2",
+    "herdr plugin install linkcd/herdr-agentcore", "herdr --skill", ".config/opencode/skills/herdr", "amazon-ssm-agent", "awscli-2",
     ".config/opencode/opencode.json", "profile ${HOST_PROFILE}",
   ]) assert.ok(userData.includes(expected), expected);
   assert.ok(!/AKIA|aws_secret_access_key|aws_access_key_id/i.test(userData));

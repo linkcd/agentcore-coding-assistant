@@ -1,6 +1,6 @@
 import { App } from "aws-cdk-lib";
 import { HerdrHostStack } from "./host-stack";
-import { loadEnvironment, loadHostNetworkConfig } from "./host-config";
+import { loadAgentCoreRuntimeArns, loadEnvironment, loadHostNetworkConfig } from "./host-config";
 
 const app = new App();
 // The Bedrock policy and OpenCode configuration target the eu.* inference profile in eu-west-1.
@@ -14,12 +14,15 @@ if (!account || !/^\d{12}$/.test(account)) {
 // "cdk context", then "cdk context --reset <number>" for the vpc-provider entry only.
 // Do not reset the ssm: entry on a host to keep: a new AMI replaces the instance and deletes its disk.
 // The lookups need bootstrap version 8 or later of the CDK lookup role.
-const network = loadHostNetworkConfig(loadEnvironment());
+const environment = loadEnvironment();
+const network = loadHostNetworkConfig(environment);
+const agentCoreRuntimeArns = loadAgentCoreRuntimeArns(environment);
 // Optional: -c volumeSizeGiB=<size>. A change on a host that exists replaces the instance and deletes its disk.
 const volumeSizeGiB = app.node.tryGetContext("volumeSizeGiB");
 new HerdrHostStack(app, "HerdrOpenCodeHost", {
   env: { account, region },
   description: "EC2 host for Herdr and OpenCode with Amazon Bedrock, reached through Session Manager",
   ...network,
+  agentCoreRuntimeArns,
   volumeSizeGiB: volumeSizeGiB === undefined ? undefined : Number(volumeSizeGiB),
 });

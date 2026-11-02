@@ -27,6 +27,22 @@ function required(environment: Environment, key: string, prefix: string): string
   return value;
 }
 
+const RUNTIME_ARN = /^arn:aws:bedrock-agentcore:[a-z0-9-]+:\d{12}:runtime\/[A-Za-z0-9_]+-[A-Za-z0-9]{10}$/;
+
+/**
+ * Optional AGENTCORE_RUNTIME_ARN: one or more AgentCore runtime ARNs, separated by commas.
+ * The host role may open terminals only in these runtimes. Without it, the role gets no AgentCore access.
+ */
+export function loadAgentCoreRuntimeArns(environment: Environment): string[] {
+  const value = environment.AGENTCORE_RUNTIME_ARN?.trim();
+  if (!value || value.startsWith("REPLACE_WITH_")) return [];
+  const arns = value.split(",").map((arn) => arn.trim());
+  for (const arn of arns) {
+    if (!RUNTIME_ARN.test(arn)) throw new Error("AGENTCORE_RUNTIME_ARN must list AgentCore runtime ARNs, not endpoint ARNs");
+  }
+  return [...new Set(arns)];
+}
+
 export function loadHostNetworkConfig(environment: Environment): HostNetworkConfig {
   return {
     vpcId: required(environment, "EC2_HOST_VPC_ID", "vpc"),

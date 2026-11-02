@@ -62,6 +62,17 @@ fi
 EOS
 )"
 
+# The Herdr skill teaches OpenCode to control Herdr panes. "herdr --skill" prints the copy that matches the installed binary.
+# OpenCode finds it in ~/.config/opencode/skills/<name>/SKILL.md. The file is rewritten on each run, so it follows the binary.
+as_user "$(cat <<'EOS'
+export PATH="$HOME/.local/bin:$PATH"
+install -d -m 0755 "$HOME/.config/opencode/skills/herdr"
+herdr --skill </dev/null >"$HOME/.config/opencode/skills/herdr/SKILL.md.tmp"
+grep -q '^name: herdr$' "$HOME/.config/opencode/skills/herdr/SKILL.md.tmp"
+mv "$HOME/.config/opencode/skills/herdr/SKILL.md.tmp" "$HOME/.config/opencode/skills/herdr/SKILL.md"
+EOS
+)"
+
 # Make login and non-login Bash sessions load the tool directories.
 as_user "$(cat <<'EOS'
 touch ~/.bashrc ~/.bash_profile
@@ -109,7 +120,7 @@ for attempt in 1 2 3 4 5; do
   [ "$attempt" -lt 5 ] || { echo "The instance role cannot reach Bedrock." >&2; exit 1; }
   sleep 10
 done
-as_user 'bash -lc "command -v opencode && opencode --version && command -v herdr && herdr --version && command -v uv && uv --version && herdr plugin list | grep -q \"^- agentcore \""'
+as_user 'bash -lc "command -v opencode && opencode --version && command -v herdr && herdr --version && command -v uv && uv --version && herdr plugin list | grep -q \"^- agentcore \" && test -s ~/.config/opencode/skills/herdr/SKILL.md"'
 
 install -d -m 0755 /var/lib/herdr-host
 date -u +%FT%TZ >/var/lib/herdr-host/bootstrap-complete

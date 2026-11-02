@@ -19,6 +19,8 @@ export interface HerdrHostProps extends StackProps {
   vpc?: ec2.IVpc;
   /** Existing subnet in `vpc` with a route to the internet (internet gateway or NAT gateway). */
   subnetId: string;
+  /** AgentCore runtime ARNs the host may open terminals in. Empty or omitted grants no AgentCore access. */
+  agentCoreRuntimeArns?: string[];
   instanceType?: string;
   volumeSizeGiB?: number;
 }
@@ -68,6 +70,20 @@ export class HerdrHostStack extends Stack {
       ],
     });
     role.attachInlinePolicy(bedrockPolicy);
+
+    // The Herdr AgentCore plugin opens a terminal with a SigV4 WebSocket to /ws/shells
+    // (InvokeAgentRuntimeCommandShell) and stops sessions with StopRuntimeSession.
+    // AgentCore checks both the runtime and its endpoint, so the policy names both.
+    const runtimeArns = props.agentCoreRuntimeArns ?? [];
+    if (runtimeArns.length > 0) {
+      role.attachInlinePolicy(new iam.Policy(this, "AgentCoreRuntimePolicy", {
+        policyName: "HerdrAgentCoreRuntimeShell",
+        statements: [new iam.PolicyStatement({
+          actions: ["bedrock-agentcore:InvokeAgentRuntimeCommandShell", "bedrock-agentcore:StopRuntimeSession"],
+          resources: runtimeArns.flatMap((arn) => [arn, `${arn}/runtime-endpoint/DEFAULT`]),
+        })],
+      }));
+    }
 
     const userData = ec2.UserData.forLinux();
     userData.addCommands(
