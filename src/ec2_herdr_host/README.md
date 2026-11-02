@@ -13,7 +13,7 @@ That component runs coding agents in AgentCore Runtime. This component gives a p
 
 - You reach the host through AWS Systems Manager Session Manager. The host has no SSH keys and no inbound ports.
 - The host gets its AWS credentials from its instance role. The role can call only the Claude model. No AWS keys are stored.
-- On the first boot, `bootstrap.sh` installs OpenCode and Herdr and writes their configuration.
+- On the first boot, `bootstrap.sh` installs OpenCode, Herdr, uv, and the Herdr AgentCore plugin (`linkcd/herdr-agentcore`) and writes their configuration.
   It marks the host ready only after it checks the tools and Bedrock access.
 - The stack uses a VPC and subnet that already exist. It never creates a network.
 

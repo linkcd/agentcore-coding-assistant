@@ -45,6 +45,23 @@ fi
 EOS
 )"
 
+# uv is the build tool of the Herdr AgentCore plugin. The installer puts uv and uvx in ~/.local/bin.
+as_user "$(cat <<'EOS'
+if [ ! -x "$HOME/.local/bin/uv" ]; then
+  curl -fsSL https://astral.sh/uv/install.sh | env UV_NO_MODIFY_PATH=1 sh
+fi
+EOS
+)"
+
+# The plugin build runs "uv sync", which downloads Python 3.11+ when the host Python is older.
+as_user "$(cat <<'EOS'
+export PATH="$HOME/.local/bin:$PATH"
+if ! herdr plugin list 2>/dev/null </dev/null | grep -q '^- agentcore '; then
+  herdr plugin install linkcd/herdr-agentcore --yes </dev/null
+fi
+EOS
+)"
+
 # Make login and non-login Bash sessions load the tool directories.
 as_user "$(cat <<'EOS'
 touch ~/.bashrc ~/.bash_profile
@@ -92,7 +109,7 @@ for attempt in 1 2 3 4 5; do
   [ "$attempt" -lt 5 ] || { echo "The instance role cannot reach Bedrock." >&2; exit 1; }
   sleep 10
 done
-as_user 'bash -lc "command -v opencode && opencode --version && command -v herdr && herdr --version"'
+as_user 'bash -lc "command -v opencode && opencode --version && command -v herdr && herdr --version && command -v uv && uv --version && herdr plugin list | grep -q \"^- agentcore \""'
 
 install -d -m 0755 /var/lib/herdr-host
 date -u +%FT%TZ >/var/lib/herdr-host/bootstrap-complete

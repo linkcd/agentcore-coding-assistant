@@ -129,7 +129,8 @@ test("user data installs Herdr and OpenCode and writes the Bedrock configuration
   const userData = JSON.stringify((instance.Properties as any).UserData);
   for (const expected of [
     "HOST_REGION='eu-west-1'", `HOST_MODEL_ID='${MODEL_ID}'`, "OPENCODE_VERSION='2.2.5'",
-    "https://herdr.dev/install.sh", "https://opencode.ai/v2/install", "amazon-ssm-agent", "awscli-2",
+    "https://herdr.dev/install.sh", "https://opencode.ai/v2/install", "https://astral.sh/uv/install.sh",
+    "herdr plugin install linkcd/herdr-agentcore", "amazon-ssm-agent", "awscli-2",
     ".config/opencode/opencode.json", "profile ${HOST_PROFILE}",
   ]) assert.ok(userData.includes(expected), expected);
   assert.ok(!/AKIA|aws_secret_access_key|aws_access_key_id/i.test(userData));

@@ -36,7 +36,7 @@ export class HerdrHostStack extends Stack {
     const lookupPending = vpc.vpcId !== props.vpcId;
     const subnet = subnets.find((candidate) => candidate.subnetId === props.subnetId) ?? (lookupPending ? subnets[0] : undefined);
     if (!subnet) throw new Error("EC2_HOST_SUBNET_ID must be a subnet of EC2_HOST_VPC_ID");
-    // The host needs outbound HTTPS to SSM, Bedrock, the dnf repositories, GitHub, the npm registry, and herdr.dev.
+    // The host needs outbound HTTPS to SSM, Bedrock, the dnf repositories, GitHub, the npm registry, herdr.dev, astral.sh, and the Python package and download hosts.
     // A lookup classifies a subnet as isolated when it has no internet gateway or NAT gateway route.
     if (vpc.isolatedSubnets.includes(subnet)) {
       throw new Error("EC2_HOST_SUBNET_ID needs a route to an internet gateway or NAT gateway");
