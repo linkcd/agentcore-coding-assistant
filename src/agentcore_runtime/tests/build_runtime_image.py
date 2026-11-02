@@ -1,4 +1,13 @@
-"""Build a local ARM64 test image with the same declared arguments as CDK."""
+"""Build a local ARM64 test image with the same declared arguments as CDK.
+
+Usage, from the repository root:
+    uv run --frozen python src/agentcore_runtime/tests/build_runtime_image.py \\
+        opencode --tag agentcore-tools:opencode
+
+To run the opt-in container checks, set HERDR_RUNTIME_TEST_IMAGE (OpenCode image)
+or CODEX_RUNTIME_TEST_IMAGE (Codex image) to the tag. The Docker context is the
+repository root, so the image includes LICENSE and NOTICE.
+"""
 
 import argparse
 import json

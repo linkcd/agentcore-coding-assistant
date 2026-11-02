@@ -11,7 +11,7 @@ from runtime_connection import UserError, runtime_target
 def test_runtime_tooling_has_no_application_package_dependencies():
     root = Path(__file__).resolve().parents[3]
     components = {path.name for path in (root / "src").iterdir() if path.is_dir()}
-    assert components == {"agentcore_runtime"}
+    assert components == {"agentcore_runtime", "ec2_herdr_host"}
     metadata = tomllib.loads((root / "pyproject.toml").read_text())
     assert metadata["project"]["dependencies"] == []
     assert metadata["tool"]["uv"]["package"] is False

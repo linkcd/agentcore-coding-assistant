@@ -1,186 +1,91 @@
-# AgentCore runtime implementation
+# AgentCore runtime
 
-## Ownership
+## Goal
 
-This component owns image definitions, startup adapters, TypeScript CDK, storage, and runtime checks.
-The connector is maintained in [linkcd/herdr-agentcore](https://github.com/linkcd/herdr-agentcore).
-The shared boundary is the [pinned JSON connection contract](../../contracts/1.0.0/README.md).
-No plugin or shared contract implementation package is required here.
+This component runs interactive coding assistants in Amazon Bedrock AgentCore Runtime.
+A person attaches to a running assistant through a terminal connection.
+The component builds the container images, deploys them with TypeScript CDK, and checks the result.
 
-## Source layout
+The connector that opens these terminals is a separate project: [linkcd/herdr-agentcore](https://github.com/linkcd/herdr-agentcore).
+This component does not depend on the connector code.
+The two projects share only a [versioned JSON connection contract](../../contracts/1.0.0/README.md).
 
-| Directory or file | Purpose |
-| --- | --- |
-| `agent_images/common/` | Shared Dockerfile, tools, mount checks, startup support, and health endpoint. |
-| `agent_images/opencode/` | OpenCode image settings, model routing, and work-activity hooks. |
-| `agent_images/codex/` | Codex image settings, provider configuration, and sandbox preset. |
-| `provision_profiles/` | Named runtime settings. |
-| `cdk/` | Deployment and storage stacks, input validation, and descriptor producer. |
-| `tests/` | Offline tests, image checks, and explicitly selected live probes. |
-| `.sample.env` | Template for external bucket/network bindings. |
+To host a person's own terminal on EC2 instead, see [`../ec2_herdr_host/`](../ec2_herdr_host/README.md).
 
-The deployed command is `/app/run.sh`, which executes the selected adapter's `run.py`.
-The shared launcher validates required mounts, configures local caches, and changes to the selected working directory.
-The adapter chooses its own CLI and model configuration.
+## How it works
 
-## Profile settings
-
-The samples are `codex-agentcore-profile-1`, `opencode-agentcore-profile-2`, and `opencode-s3filesystem-agentcore-profile-3`.
-They are deployment settings references, not an assistant enum in a connector.
-The entrypoint accepts only `-c runtimeProfile=NAME` for selecting project configuration.
-
-| Field | Purpose |
-| --- | --- |
-| `stackName`, `runtimeName`, `region` | Deployment names and AWS region. The CDK Toolkit supplies the authenticated account. |
-| `image` | Select a directory under `agent_images/`. |
-| `command` | Optional explicit override of the image's launch argv. |
-| `inference.modelId` | Startup model identifier. |
-| `inference.region` | Optional inference-region override. Defaults to deployment region. |
-| `inference.bedrock-endpoint-type` | Optional exact value `runtime` or `mantle`. Native model routing is used when omitted. |
-| `lifecycle` | Idle timeout and maximum compute lifetime in seconds. |
-| `s3Files` | Storage stack name, mount path, and read-only choice. |
-| `vpc` | Optional external VPC bindings for profiles without managed S3 Files storage. |
-| `workingDirectory` | Optional absolute path. For S3 profiles, it must remain inside the dedicated mount. |
-| `environment` | Additional string settings; derived settings cannot be overridden here. |
-| `tags` | Optional explicit tags. No application tags are added automatically. |
-
-Each image definition declares its Dockerfile, build arguments, and command.
-It does not declare a Herdr recognition kind.
-Model configuration, tool installation, and health reporting are runtime responsibilities.
-
-## External storage bindings
-
-Fill `.env` beside this README using `.sample.env` as the template:
-
-```dotenv
-S3_BUCKET_NAME=example-agent-workspaces
-VPC_SUBNET_IDS=<first-subnet-id>,<second-subnet-id>
-VPC_SECURITY_GROUP_IDS=<security-group-id>
+```text
+Provision profile + image definition + external bindings
+    -> TypeScript CDK
+    -> AgentCore Runtime + execution role
+    -> connection descriptor (JSON)
 ```
 
-Replace the placeholders with existing resources for a real deployment.
-The component `.env` is the only source for these deployment bindings.
-Do not add an access-point ARN, root prefix, POSIX settings, or storage stack name to `.env`.
-The profile selects the storage stack. CDK creates the access point.
+- A **provision profile** is a named JSON file in `provision_profiles/`. It selects an image, a model, lifecycle limits, and storage.
+- An **image definition** in `agent_images/` holds the Dockerfile, build arguments, and the launch command for one assistant.
+- An **adapter** in the image sets up the assistant: its model routing, its tools, and its work-health reports.
+- **Storage** is optional. A profile with S3 storage mounts its own S3 Files access point as the workspace. Other profiles keep files on local compute only.
+- **Credentials** come from the AWS role of the runtime. The component stores no credentials.
+- The **connection descriptor** gives the connector the runtime ARN and the launch command. It gives nothing else.
 
-The storage stack uses the bucket root and external networking.
-Each S3-backed profile owns one access point rooted at `/agent-filesystem/profiles/<profile-name>`.
-The runtime mounts and starts directly at `/mnt/workspace` in the sample.
-UID/GID are 1000:1000 and directory mode is 755.
-No second profile directory is created under the mount.
+[Design](../../docs/DESIGN.md) explains these parts in more detail. [Requirements](../../docs/REQUIREMENTS.md) lists the rules that the design follows.
 
-Worker roles are scoped to their generated access point and have no direct S3 bucket grants.
-Networking, subnets, security groups, and the backing bucket remain externally owned.
-The operator-owned network deployment source and settings are ignored under `.local/deployments/`.
-See [storage mapping](../../docs/STORAGE_MAPPING.md).
+## What you provide
 
-## Build and deploy
+For a profile without S3 storage, you provide nothing except AWS sign-in and a bootstrapped CDK environment.
+For a profile with S3 storage, you provide an existing bucket, subnets, and security groups.
+Copy `.sample.env` to `.env` in this folder, and enter their IDs. Git ignores `.env`.
+[Storage mapping](../../docs/STORAGE_MAPPING.md) explains how a profile maps to a path in the bucket.
 
-Run from the repository root:
+## Use it
+
+Run these commands from the repository root. Replace the profile name with a file name from `provision_profiles/`.
 
 ```bash
-uv sync --frozen
 npm ci --prefix src/agentcore_runtime/cdk
-npm --prefix src/agentcore_runtime/cdk run cdk -- synth \
-  -c runtimeProfile=opencode-agentcore-profile-2
-npm --prefix src/agentcore_runtime/cdk run cdk -- diff \
-  -c runtimeProfile=opencode-agentcore-profile-2
+npm --prefix src/agentcore_runtime/cdk run cdk -- diff -c runtimeProfile=<profile>
 ```
 
-Review the diff before deployment. Use official CDK commands, a configured AWS credential chain, and an ARM64-capable Docker builder.
-The target account/region needs the standard CDK bootstrap resources.
+Review the diff. Deploy only with explicit authorization:
 
 ```bash
-npm --prefix src/agentcore_runtime/cdk run cdk -- deploy \
-  -c runtimeProfile=opencode-agentcore-profile-2 \
-  --outputs-file "$PWD/.local/deployments/opencode-agentcore-profile-2.json"
+npm --prefix src/agentcore_runtime/cdk run cdk -- deploy -c runtimeProfile=<profile> \
+  --outputs-file "$PWD/.local/deployments/<profile>.json"
 ```
 
-For the S3 profile, deploy both selected stacks with `--all` if CDK requests a stack selection.
-Deployment does not update connector profiles or change account retention settings.
-Synthesize from the current checkout before deploying a change.
+A profile with S3 storage also deploys its storage stack. Add `--all` if CDK asks you to select stacks.
 
-## Connection output
-
-The stack exports `RuntimeArn`, `RuntimeId`, and `ConnectionDescriptor`.
-The descriptor contains only ARN, explicit launch argv, and an optional endpoint inside its versioned envelope.
-CDK ARN tokens resolve during deployment. The consumer derives the region from the resolved ARN.
-Local recognition hints, host credential selection, and profile labels belong to the connector.
-
-The producer in `cdk/connection.ts` is implemented locally.
-Its output is checked against the schema and fixtures pinned under `contracts/1.0.0/` at the repository root.
-`CONTRACT_VERSION` selects the exact SemVer directory used by the producer's exporter and tests.
-The runtime does not load a plugin package or import a sibling repository during synthesis or execution.
-
-## Runtime behavior and limits
-
-The samples use a 900-second idle timeout and 28,800-second maximum compute lifetime.
-These are platform lifecycle settings, not a timer based only on keyboard input.
-WebSocket traffic and work-health reports can affect idle accounting.
-
-OpenCode reports tracked work through short-lived, PID-validated health leases.
-Question and permission waits are idle only when no other tracked work remains.
-Codex currently supplies readiness health; it does not have the same work reporter.
-No advancing `time_of_last_update` is sent to AWS.
-
-The PUBLIC profiles start in `/home/agent`; the S3 profile starts in `/mnt/workspace`.
-Only mounted files persist across compute replacement. Default home and conversation state remain ephemeral.
-Do not point multiple runtimes at a shared live conversation database without a separate persistence design.
-
-Native AWS role providers handle model credentials. The launcher does not export credential snapshots.
-Execution roles permit both Bedrock Runtime and Mantle inference, independently of startup routing.
-The image keeps OpenCode auto-update disabled.
-Changing model providers in a saved conversation can expose provider-specific history limitations.
-
-## Development tools and MCP
-
-The images include pinned Python, Node.js, uv/uvx, pnpm, Go, Rust, Git, GitHub CLI, AWS CLI, and common build tools.
-Exact versions and checksums are in each image definition.
-Caches and disposable tool environments use `/tmp/agentcore`.
-Persistent MCP source and lockfiles can live in `/mnt/workspace/tools/`.
-Native MCP registrations belong in `/mnt/workspace/opencode.json`.
-The optional `agentcore-mcp` command rebuilds a locked Python tool project into local runtime storage.
-No specific MCP server or GitHub credential broker is installed by default.
-
-## Validation
+The stack outputs `RuntimeArn`, `RuntimeId`, and `ConnectionDescriptor`.
+To write the descriptor to a file for the connector, run the offline exporter.
+The output path must not exist yet.
 
 ```bash
-uv run --frozen ruff check src scripts
-uv run --frozen ruff format --check src scripts
-uv run --frozen pytest -q --tb=short
-npm run check --prefix src/agentcore_runtime/cdk
-npm test --prefix src/agentcore_runtime/cdk
-uv run --frozen python scripts/check_repository.py
-uv run --frozen python scripts/repository_privacy.py
+npm --prefix src/agentcore_runtime/cdk run export-connection -- \
+  --cdk-outputs <outputs.json> --stack <stack-name> --output <connection.json>
 ```
 
-Build an image after changing image behavior:
+## Know before you change it
 
-```bash
-uv run --frozen python src/agentcore_runtime/tests/build_runtime_image.py \
-  opencode --tag agentcore-tools:opencode
-uv run --frozen python src/agentcore_runtime/tests/build_runtime_image.py \
-  codex --tag agentcore-tools:codex
-```
+- Only files on the mounted S3 workspace persist. The default home directory and conversation state are ephemeral.
+- The connector, not this component, decides how Herdr recognizes an assistant and which host credentials it uses.
+- Never put credentials or real IDs in Git. Keep them in `.env` or under `.local/`. Git ignores both.
+- The deploy does not change connector profiles or account retention settings.
 
-Set `HERDR_RUNTIME_TEST_IMAGE` and `CODEX_RUNTIME_TEST_IMAGE` to those tags to enable the corresponding container checks.
-The Docker context uses the repository root and includes root LICENSE and NOTICE.
-CDK excludes deployment inputs, credentials, tests, and unrelated image adapters from its assets.
+## Where to find details
 
-## Live probes
-
-Live probes require explicit authorization. They create disposable sessions and stop only those sessions.
-The ARN parser used by probes is local to this repository.
-
-| Probe | Purpose |
+| Topic | Location |
 | --- | --- |
-| `tests/live_runtime_tools.py` | Development tools, native CLI commands, and generic MCP reconstruction. |
-| `tests/live_runtime_activity.py` | OpenCode busy/wait/idle and process-death health behavior. |
-| `tests/live_codex_sandbox.py` | Native sandbox restrictions and a model-driven command. |
-| `tests/live_profile_storage.py` | Empty-root mount and cross-session file persistence. |
+| Profile fields and their meaning | Comments on `RuntimeProfile` in `cdk/profile.ts` |
+| Sample profiles and their model, network, and lifecycle values | `provision_profiles/*.json` |
+| Image tools, versions, and checksums | `agent_images/*/image.json` |
+| Startup, mount checks, and health service | `agent_images/common/` |
+| Assistant model routing and work-health reports | `agent_images/<assistant>/` |
+| Descriptor producer | `cdk/connection.ts` |
+| Storage layout and access boundaries | [Storage mapping](../../docs/STORAGE_MAPPING.md) |
+| Lifecycle, credentials, and session state | [Design](../../docs/DESIGN.md) |
+| Connection contract and its update steps | [Contract](../../contracts/1.0.0/README.md) |
+| Image build and container checks | Docstring of `tests/build_runtime_image.py` |
+| Live probes | Docstring and `--help` of each `tests/live_*.py` file |
+| Required checks before a change | [Contributor instructions](../../agent.md) |
 
-Do not run the empty-root storage probe against a workspace that contains user data.
-Use each probe's `--help` for required parameters.
-Herdr end-to-end attachment tests remain in the independent plugin repository.
-
-See [the repository guide](../../README.md), [design](../../docs/DESIGN.md), and [requirements](../../docs/REQUIREMENTS.md).
+Live probes use real AWS resources. Run them only with explicit authorization and only in disposable sessions.

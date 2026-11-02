@@ -1,0 +1,23 @@
+{
+  "name": "herdr-opencode-ec2-host",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AWS CDK definition for an EC2 host that runs Herdr and OpenCode with Amazon Bedrock",
+  "license": "Apache-2.0",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "cdk": "cdk"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "2.273.0",
+    "constructs": "10.8.1"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.0",
+    "aws-cdk": "2.1145.0",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3"
+  }
+}

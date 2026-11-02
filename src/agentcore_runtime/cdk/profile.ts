@@ -3,22 +3,44 @@ import * as path from "node:path";
 import { parseEnv } from "node:util";
 import { validateCommand } from "./connection";
 
+/**
+ * One named deployment definition, read from provision_profiles/<name>.json.
+ * The entrypoint selects it with -c runtimeProfile=<name>. It rejects other per-field context.
+ * It is a settings reference. A connector does not use it as an assistant type.
+ */
 export interface RuntimeProfile {
+  /** Deployment names. The CDK Toolkit supplies the authenticated account. */
   stackName: string;
   runtimeName: string;
+  /** AWS region of the deployment. */
   region: string;
+  /** Idle timeout and maximum compute lifetime, in seconds. The platform enforces both. */
   lifecycle: { idleRuntimeSessionTimeout: number; maxLifetime: number };
+  /** Explicit tags only. The stack adds no application tags. */
   tags?: Record<string, string>;
+  /** External VPC bindings for a profile that has no managed S3 Files storage. */
   vpc?: { subnetIds: string[]; securityGroupIds: string[] };
+  /** Directory name under agent_images/. The image definition holds the Dockerfile, build arguments, and command. */
   image: string;
+  /** Explicit override of the image's launch argv. */
   command?: string[];
-  inference: { modelId: string; region?: string; "bedrock-endpoint-type"?: "runtime" | "mantle" };
+  inference: {
+    /** Startup model identifier. */
+    modelId: string;
+    /** Inference region. The default is the deployment region. */
+    region?: string;
+    /** "runtime" or "mantle". When omitted, the model's native routing is used. */
+    "bedrock-endpoint-type"?: "runtime" | "mantle";
+  };
+  /** Storage stack name, mount path, and read-only choice. See docs/STORAGE_MAPPING.md. */
   s3Files?: {
     storageStackName: string;
     mountPath: string;
     readOnly: boolean;
   };
+  /** Absolute path. With S3 Files, it must stay inside the dedicated mount. */
   workingDirectory?: string;
+  /** Extra string settings. A setting that the stack derives cannot be overridden here. */
   environment?: Record<string, string>;
 }
 

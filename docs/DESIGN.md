@@ -27,6 +27,11 @@ An interactive Shell connection invokes the published launch command.
 `/app/run.sh` starts the selected adapter's `run.py`.
 Shared startup validates the required mount, sets local cache paths, and selects the working directory.
 Adapters own native CLI settings and AWS credential-provider integration.
+The image includes development tools. Each image definition holds their exact versions and checksums.
+Caches and disposable tool environments use `/tmp/agentcore`.
+Persistent MCP source and lockfiles can live in `/mnt/workspace/tools/`. Native MCP registrations belong in `/mnt/workspace/opencode.json`.
+The optional `agentcore-mcp` command rebuilds a locked Python tool project into local runtime storage.
+The image installs no MCP server and no GitHub credential broker.
 
 ## Persistent storage
 
@@ -45,11 +50,27 @@ No contract implementation is included in the running agent container.
 
 ## Lifecycle and credentials
 
-Idle timeout and maximum lifetime are deployment settings.
+Idle timeout and maximum lifetime are deployment settings in the provision profile.
+Both are platform lifecycle settings. They are not a timer based only on keyboard input.
+WebSocket traffic and work-health reports can affect idle accounting.
 Actual work can be reported with `HealthyBusy`; process existence alone is not work.
 The maximum compute lifetime is not extended by work reporting.
+OpenCode reports tracked work through short-lived, PID-validated health leases.
+A question or permission wait counts as idle only when no other tracked work remains.
+Codex supplies readiness health only. It has no work reporter.
+The runtime sends no advancing `time_of_last_update` to AWS.
 Use AWS role credential providers rather than static credential snapshots.
+The launcher does not export credential snapshots.
+Execution roles permit both Bedrock Runtime and Mantle inference, independently of startup routing.
 The application owner configures authentication for external services such as GitHub.
+
+## Session state
+
+A profile without S3 storage starts in `/home/agent`. A profile with S3 storage starts in `/mnt/workspace`.
+Only mounted files persist when compute is replaced. The default home directory and conversation state are ephemeral.
+Do not point multiple runtimes at one shared live conversation database without a separate persistence design.
+The image keeps OpenCode auto-update off.
+A saved conversation can show provider-specific history limits after you change the model provider.
 
 ## Verification
 

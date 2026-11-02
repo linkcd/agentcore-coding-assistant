@@ -30,6 +30,7 @@ def anchors(document):
 def check_documents():
     documents = [*ROOT.glob("*.md"), *ROOT.glob("docs/*.md"), *ROOT.glob("contracts/**/*.md")]
     documents.append(ROOT / "src/agentcore_runtime/README.md")
+    documents.append(ROOT / "src/ec2_herdr_host/README.md")
     for document in documents:
         content = document.read_text()
         assert content.count("```") % 2 == 0, document
