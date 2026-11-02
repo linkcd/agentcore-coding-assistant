@@ -3,11 +3,11 @@ import * as path from "node:path";
 import { ArnFormat, CfnOutput, Stack, StackProps, Tags, aws_ec2 as ec2, aws_iam as iam } from "aws-cdk-lib";
 import { Construct } from "constructs";
 
-export const MODEL_ID = "eu.anthropic.claude-sonnet-5-5";
-export const FOUNDATION_MODEL = "anthropic.claude-sonnet-5-5";
-// Destination regions of the eu. inference profile. Verify with:
-// aws bedrock get-inference-profile --inference-profile-identifier eu.anthropic.claude-sonnet-5-5
-export const PROFILE_REGIONS = ["eu-north-1", "eu-west-3", "eu-south-1", "eu-south-2", "eu-west-1", "eu-central-1"];
+// Kimi K3 is used through its global cross-Region inference profile, the same model ID as the AgentCore runtime profiles.
+// Bedrock may process requests in any commercial Region. Verify with:
+// aws bedrock get-inference-profile --region eu-west-1 --inference-profile-identifier global.moonshotai.kimi-k3
+export const MODEL_ID = "global.moonshotai.kimi-k3";
+export const FOUNDATION_MODEL = "moonshotai.kimi-k3";
 export const HOST_USER = "ssm-user";
 export const AWS_PROFILE_NAME = "ec2";
 export const OPENCODE_VERSION = "2.2.5";
@@ -55,16 +55,26 @@ export class HerdrHostStack extends Stack {
     const inferenceProfileArn = this.formatArn({
       service: "bedrock", resource: "inference-profile", resourceName: MODEL_ID, arnFormat: ArnFormat.SLASH_RESOURCE_NAME,
     });
-    const foundationModelArns = PROFILE_REGIONS.map((profileRegion) => this.formatArn({
-      service: "bedrock", region: profileRegion, account: "", resource: "foundation-model",
-      resourceName: FOUNDATION_MODEL, arnFormat: ArnFormat.SLASH_RESOURCE_NAME,
-    }));
+    // Global cross-Region inference needs three grants: the profile in this Region, the model in this Region,
+    // and the Region-less global model, which Bedrock evaluates with aws:RequestedRegion set to "unspecified".
+    // The model grants apply only through this one profile.
+    const viaProfile = { "bedrock:InferenceProfileArn": inferenceProfileArn };
+    const invokeActions = ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"];
     const bedrockPolicy = new iam.Policy(this, "BedrockPolicy", {
-      policyName: "HerdrOpenCodeClaudeSonnet55EU",
+      policyName: "HerdrOpenCodeBedrockModel",
       statements: [
+        new iam.PolicyStatement({ actions: invokeActions, resources: [inferenceProfileArn] }),
         new iam.PolicyStatement({
-          actions: ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
-          resources: [inferenceProfileArn, ...foundationModelArns],
+          actions: invokeActions,
+          resources: [this.formatArn({
+            service: "bedrock", account: "", resource: "foundation-model", resourceName: FOUNDATION_MODEL, arnFormat: ArnFormat.SLASH_RESOURCE_NAME,
+          })],
+          conditions: { StringEquals: viaProfile },
+        }),
+        new iam.PolicyStatement({
+          actions: invokeActions,
+          resources: [`arn:${this.partition}:bedrock:::foundation-model/${FOUNDATION_MODEL}`],
+          conditions: { StringEquals: { ...viaProfile, "aws:RequestedRegion": "unspecified" } },
         }),
         new iam.PolicyStatement({ actions: ["bedrock:GetInferenceProfile"], resources: [inferenceProfileArn] }),
       ],

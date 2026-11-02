@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { App, Stack, aws_ec2 as ec2 } from "aws-cdk-lib";
 import { Match, Template } from "aws-cdk-lib/assertions";
-import { HerdrHostStack, MODEL_ID, PROFILE_REGIONS } from "../host-stack";
+import { HerdrHostStack, MODEL_ID } from "../host-stack";
 import { loadAgentCoreRuntimeArns, loadHostNetworkConfig } from "../host-config";
 
 const ACCOUNT = "123456789012";
@@ -91,23 +91,29 @@ test("the instance role is trusted by EC2 and has Session Manager access", () =>
   template.resourceCountIs("AWS::IAM::AccessKey", 0);
 });
 
-test("Bedrock access is limited to the inference profile and its destination models", () => {
+test("Bedrock access is limited to Kimi K3 through its global inference profile", () => {
   const template = synth();
   const policies = Object.values(template.findResources("AWS::IAM::Policy"));
-  const policy = policies.find((resource) => (resource.Properties as any).PolicyName === "HerdrOpenCodeClaudeSonnet55EU");
+  const policy = policies.find((resource) => (resource.Properties as any).PolicyName === "HerdrOpenCodeBedrockModel");
   assert.ok(policy);
-  const [invoke, describe] = (policy.Properties as any).PolicyDocument.Statement;
-  assert.deepEqual(invoke.Action, ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"]);
-  assert.equal(describe.Action, "bedrock:GetInferenceProfile");
+  const [profile, regionalModel, globalModel, describe] = (policy.Properties as any).PolicyDocument.Statement;
   // Expected values are written out, not taken from the stack constants.
   const arn = (rest: string) => ({ "Fn::Join": ["", ["arn:", { Ref: "AWS::Partition" }, `:bedrock:${rest}`]] });
-  const profile = arn(`eu-west-1:${ACCOUNT}:inference-profile/eu.anthropic.claude-sonnet-5-5`);
-  const models = ["eu-north-1", "eu-west-3", "eu-south-1", "eu-south-2", "eu-west-1", "eu-central-1"]
-    .map((region) => arn(`${region}::foundation-model/anthropic.claude-sonnet-5-5`));
-  assert.deepEqual(invoke.Resource, [profile, ...models]);
-  assert.deepEqual(describe.Resource, profile);
-  assert.deepEqual(PROFILE_REGIONS, ["eu-north-1", "eu-west-3", "eu-south-1", "eu-south-2", "eu-west-1", "eu-central-1"]);
-  assert.equal(MODEL_ID, "eu.anthropic.claude-sonnet-5-5");
+  const profileArn = arn(`eu-west-1:${ACCOUNT}:inference-profile/global.moonshotai.kimi-k3`);
+  const invoke = ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"];
+  assert.deepEqual(profile.Action, invoke);
+  assert.deepEqual(profile.Resource, profileArn);
+  assert.deepEqual(regionalModel.Action, invoke);
+  assert.deepEqual(regionalModel.Resource, arn("eu-west-1::foundation-model/moonshotai.kimi-k3"));
+  assert.deepEqual(regionalModel.Condition, { StringEquals: { "bedrock:InferenceProfileArn": profileArn } });
+  assert.deepEqual(globalModel.Action, invoke);
+  assert.deepEqual(globalModel.Resource, arn("::foundation-model/moonshotai.kimi-k3"));
+  assert.deepEqual(globalModel.Condition, {
+    StringEquals: { "bedrock:InferenceProfileArn": profileArn, "aws:RequestedRegion": "unspecified" },
+  });
+  assert.equal(describe.Action, "bedrock:GetInferenceProfile");
+  assert.deepEqual(describe.Resource, profileArn);
+  assert.equal(MODEL_ID, "global.moonshotai.kimi-k3");
 });
 
 test("without a runtime ARN the role may use every AgentCore runtime of its account and Region", () => {

@@ -4,7 +4,7 @@
 
 This component creates one EC2 host for interactive work.
 You open a terminal on the host. In the terminal you run the Herdr TUI and OpenCode.
-OpenCode uses a Claude model in Amazon Bedrock.
+OpenCode uses the Kimi K3 model from Moonshot AI in Amazon Bedrock. The AgentCore runtime profiles use the same model.
 
 This component is separate from [`../agentcore_runtime/`](../agentcore_runtime/README.md).
 That component runs coding agents in AgentCore Runtime. This component gives a person a host to work on.
@@ -12,7 +12,7 @@ That component runs coding agents in AgentCore Runtime. This component gives a p
 ## How it works
 
 - You reach the host through AWS Systems Manager Session Manager. The host has no SSH keys and no inbound ports.
-- The host gets its AWS credentials from its instance role. The role can call only the Claude model, plus AgentCore runtimes (terminal and stop actions only). That is every runtime in the account and Region, or only those listed in `AGENTCORE_RUNTIME_ARN`. No AWS keys are stored.
+- The host gets its AWS credentials from its instance role. The role can call only Kimi K3 through its global inference profile, plus AgentCore runtimes (terminal and stop actions only). That is every runtime in the account and Region, or only those listed in `AGENTCORE_RUNTIME_ARN`. No AWS keys are stored.
 - On the first boot, `bootstrap.sh` installs OpenCode, Herdr, the Herdr agent skill for OpenCode, uv, and the Herdr AgentCore plugin (`linkcd/herdr-agentcore`) and writes their configuration.
   It marks the host ready only after it checks the tools and Bedrock access.
 - The stack uses a VPC and subnet that already exist. It never creates a network.
@@ -30,7 +30,18 @@ Copy `.sample.env` to `.env` in this folder. Git ignores `.env`. Enter two IDs, 
 Use a private subnet with a NAT gateway. The host then has no public IP address.
 The subnet must have a route to the internet.
 
-You also need an AWS sign-in, a bootstrapped CDK environment, and Bedrock access to the Claude model.
+You also need an AWS sign-in, a bootstrapped CDK environment, and Bedrock access to Kimi K3 (see below).
+
+## The model
+
+OpenCode uses `amazon-bedrock/global.moonshotai.kimi-k3` in `eu-west-1`. This is the model ID of the AgentCore runtime profiles in `../agentcore_runtime/`.
+
+- The host uses the **global** cross-Region inference profile. Bedrock can process requests in any commercial Region.
+  There is no EU-only profile. Do not use this host for data that must stay in the EU.
+- If an SCP denies Regions, it must allow `aws:RequestedRegion` = `unspecified`, because global profiles use that value.
+- The role gets three grants, all tied to this one profile: the profile in `eu-west-1`, the model in `eu-west-1`, and the Region-less global model.
+- To change the model, edit `MODEL_ID` and `FOUNDATION_MODEL` in `host-stack.ts`. Check the new ID with `opencode models amazon-bedrock` first.
+  The policy is written for a `global.` profile. A geographic or in-Region profile needs different model grants, so change the policy too.
 
 ## Use it
 
