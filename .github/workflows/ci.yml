@@ -25,11 +25,14 @@ jobs:
           node-version: "22"
       - run: uv sync --frozen
       - run: npm ci --prefix src/agentcore_runtime/cdk
+      - run: npm ci --prefix src/ec2_herdr_host
       - run: uv run --frozen ruff check src scripts
       - run: uv run --frozen ruff format --check src scripts
       - run: uv run --frozen pytest -q --tb=short
       - run: npm run check --prefix src/agentcore_runtime/cdk
       - run: npm test --prefix src/agentcore_runtime/cdk
+      - run: npm run check --prefix src/ec2_herdr_host
+      - run: npm test --prefix src/ec2_herdr_host
       - run: uv run --frozen python scripts/check_repository.py
       - run: uv run --frozen python scripts/repository_privacy.py
       - name: Verify runtime SDK installation
