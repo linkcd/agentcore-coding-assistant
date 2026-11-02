@@ -19,7 +19,7 @@ from agentcore_runtime.agent_images.opencode import run as launcher
 IMAGE_CONTEXT = Path(__file__).resolve().parents[1] / "agent_images/opencode"
 COMMON = Path(__file__).resolve().parents[1] / "agent_images/common"
 
-MODEL = "anthropic.claude-sonnet-4-5-20250929-v1:0"
+MODEL = "global.moonshotai.kimi-k3"
 
 
 def test_shell_receives_deployment_settings_but_not_pid1_credentials():

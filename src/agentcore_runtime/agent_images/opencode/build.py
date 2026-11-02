@@ -11,7 +11,7 @@ env = tool_environment(
         {
             **os.environ,
             "AWS_REGION": "us-west-2",
-            "BEDROCK_MODEL_ID": "anthropic.claude-sonnet-4-5-20250929-v1:0",
+            "BEDROCK_MODEL_ID": "global.moonshotai.kimi-k3",
             "OPENCODE_DISABLE_MODELS_FETCH": "1",
         },
         b"",
