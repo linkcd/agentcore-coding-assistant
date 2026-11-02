@@ -94,7 +94,7 @@ An **AgentCore setup** pane opens and asks these questions:
 | Runtime ARN | The `RuntimeArn` from step 1. |
 | AWS profile | Leave blank. The host uses its instance role. |
 | Runtime endpoint | Leave blank to use `DEFAULT`. |
-| Herdr agent kind | `opencode` or `codex`, to match the runtime image. Leave blank for a plain terminal. |
+| Herdr agent kind | Press Enter to accept the default `opencode`. Enter `codex` to match a Codex image, or `terminal` for a plain terminal. The prompt shows these choices. |
 | Launch argv as JSON | Press Enter to accept the default `["/app/run.sh"]`, which the sample OpenCode and Codex images use. For another image, enter the `command` from its `ConnectionDescriptor`. |
 
 The answers are saved as a profile in `config.json` in the folder printed by `herdr plugin config-dir agentcore`.
@@ -132,7 +132,7 @@ Reattaching works only while the original AgentCore session is alive. After it e
 | `NoCredentialsError` | The host has no AWS credentials. Check that the instance has its role. If you typed an AWS profile in setup, make sure it exists on the host, or run setup again and leave it blank. |
 | `ResourceNotFoundException` | The runtime ARN is wrong or belongs to another region or account. |
 | Shell closes at once | The launch command does not exist in the image. Check it against the runtime's `ConnectionDescriptor`. |
-| A plain terminal opens, not the agent | The agent kind is blank or unsupported. The terminal still works. |
+| A plain terminal opens, not the agent | The agent kind is `terminal` or one that Herdr does not recognize. The terminal still works. |
 | Wrong profile saved | Run `agentcore.setup` again with the same name and answer `y` to replace it. |
 
 ## Know before you change it
