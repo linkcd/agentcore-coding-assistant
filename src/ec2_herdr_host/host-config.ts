@@ -31,7 +31,7 @@ const RUNTIME_ARN = /^arn:aws:bedrock-agentcore:[a-z0-9-]+:\d{12}:runtime\/[A-Za
 
 /**
  * Optional AGENTCORE_RUNTIME_ARN: one or more AgentCore runtime ARNs, separated by commas.
- * The host role may open terminals only in these runtimes. Without it, the role gets no AgentCore access.
+ * The host role may open terminals only in these runtimes. Without it, the role may use every runtime in the account and Region.
  */
 export function loadAgentCoreRuntimeArns(environment: Environment): string[] {
   const value = environment.AGENTCORE_RUNTIME_ARN?.trim();

@@ -110,9 +110,14 @@ test("Bedrock access is limited to the inference profile and its destination mod
   assert.equal(MODEL_ID, "eu.anthropic.claude-sonnet-5-5");
 });
 
-test("without a runtime ARN the role gets no AgentCore access", () => {
-  const policies = Object.values(synth().findResources("AWS::IAM::Policy"));
-  assert.ok(!JSON.stringify(policies).includes("bedrock-agentcore"));
+test("without a runtime ARN the role may use every AgentCore runtime of its account and Region", () => {
+  const policy = Object.values(synth().findResources("AWS::IAM::Policy"))
+    .find((resource) => (resource.Properties as any).PolicyName === "HerdrAgentCoreRuntimeShell");
+  assert.ok(policy);
+  const [statement] = (policy.Properties as any).PolicyDocument.Statement;
+  assert.deepEqual(statement.Action, ["bedrock-agentcore:InvokeAgentRuntimeCommandShell", "bedrock-agentcore:StopRuntimeSession"]);
+  const arn = (rest: string) => ({ "Fn::Join": ["", ["arn:", { Ref: "AWS::Partition" }, `:bedrock-agentcore:eu-west-1:${ACCOUNT}:${rest}`]] });
+  assert.deepEqual(statement.Resource, [arn("runtime/*"), arn("runtime/*/runtime-endpoint/*")]);
 });
 
 test("AgentCore access is limited to the shell and stop actions on the runtime and its DEFAULT endpoint", () => {

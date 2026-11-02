@@ -12,7 +12,7 @@ That component runs coding agents in AgentCore Runtime. This component gives a p
 ## How it works
 
 - You reach the host through AWS Systems Manager Session Manager. The host has no SSH keys and no inbound ports.
-- The host gets its AWS credentials from its instance role. The role can call only the Claude model, plus the AgentCore runtimes listed in `AGENTCORE_RUNTIME_ARN` (terminal and stop actions only). No AWS keys are stored.
+- The host gets its AWS credentials from its instance role. The role can call only the Claude model, plus AgentCore runtimes (terminal and stop actions only). That is every runtime in the account and Region, or only those listed in `AGENTCORE_RUNTIME_ARN`. No AWS keys are stored.
 - On the first boot, `bootstrap.sh` installs OpenCode, Herdr, the Herdr agent skill for OpenCode, uv, and the Herdr AgentCore plugin (`linkcd/herdr-agentcore`) and writes their configuration.
   It marks the host ready only after it checks the tools and Bedrock access.
 - The stack uses a VPC and subnet that already exist. It never creates a network.
@@ -25,7 +25,7 @@ Copy `.sample.env` to `.env` in this folder. Git ignores `.env`. Enter two IDs, 
 | --- | --- |
 | `EC2_HOST_VPC_ID` | An existing VPC. |
 | `EC2_HOST_SUBNET_ID` | A subnet in that VPC. |
-| `AGENTCORE_RUNTIME_ARN` | Optional. The `RuntimeArn` of the AgentCore runtime(s) the host may open terminals in, separated by commas. The role then gets `InvokeAgentRuntimeCommandShell` and `StopRuntimeSession` on those runtimes and their `DEFAULT` endpoint. Without it, the role has no AgentCore access. |
+| `AGENTCORE_RUNTIME_ARN` | Optional. The `RuntimeArn` of the AgentCore runtime(s) the host may open terminals in, separated by commas. The role then gets `InvokeAgentRuntimeCommandShell` and `StopRuntimeSession` on only those runtimes and their `DEFAULT` endpoint. Without it, the role may use every runtime of the account and Region. Set it to follow least privilege. |
 
 Use a private subnet with a NAT gateway. The host then has no public IP address.
 The subnet must have a route to the internet.
